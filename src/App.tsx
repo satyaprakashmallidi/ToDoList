@@ -3,8 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
+import { Menu } from 'lucide-react'
 import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
 import { Signup } from './pages/Signup'
@@ -12,17 +12,88 @@ import { Dashboard } from './pages/Dashboard'
 import { Tasks } from './pages/Tasks'
 import { Calendar } from './pages/Calendar'
 import { AddTasks } from './pages/AddTasks'
+import { Teams } from './pages/Teams'
+import { Profile } from './pages/Profile'
 
 const AppLayout: React.FC = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Default to true on tablet and desktop, false on mobile
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 640
+    }
+    return true
+  })
+  
+  // State to control toggle button visibility with delay
+  const [showToggleButton, setShowToggleButton] = useState(!sidebarOpen)
+
+  // Toggle sidebar function
+  const toggleSidebar = () => {
+    setSidebarOpen(!sidebarOpen)
+  }
+
+  // Handle toggle button visibility with animation delay
+  React.useEffect(() => {
+    if (sidebarOpen) {
+      // Hide button immediately when sidebar opens
+      setShowToggleButton(false)
+    } else {
+      // Show button after sidebar close animation completes (300ms)
+      const timer = setTimeout(() => {
+        setShowToggleButton(true)
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [sidebarOpen])
+
+  // Handle window resize
+  React.useEffect(() => {
+    let resizeTimer: NodeJS.Timeout
+
+    const handleResize = () => {
+      // Debounce resize events to prevent flickering
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => {
+        // Only auto-close on mobile, let user control tablet+ state
+        if (window.innerWidth < 640 && sidebarOpen) {
+          setSidebarOpen(false)
+        }
+        // Auto-open on tablet+ if previously closed due to mobile
+        else if (window.innerWidth >= 640 && !sidebarOpen) {
+          setSidebarOpen(true)
+        }
+      }, 100)
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      clearTimeout(resizeTimer)
+    }
+  }, [sidebarOpen])
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30">
-      <Header onMenuClick={() => setSidebarOpen(true)} />
-      <div className="flex min-h-[calc(100vh-80px)]">
-        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <main className="flex-1 overflow-auto lg:ml-0">
-          <div className="animate-in fade-in duration-300">
+    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 flex overflow-hidden">
+      <Sidebar isOpen={sidebarOpen} onClose={toggleSidebar} onToggle={toggleSidebar} />
+      
+      {/* Mobile toggle button when sidebar is closed - only for very small screens */}
+      {showToggleButton && (
+        <button
+          onClick={toggleSidebar}
+          className="fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow-lg border border-gray-200 hover:bg-gray-50 transition-all duration-200 sm:hidden"
+          aria-label="Open menu"
+        >
+          <Menu className="w-4 h-4 text-gray-600" />
+        </button>
+      )}
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <main className="flex-1 overflow-y-auto">
+          <div className={`animate-in fade-in duration-300 py-4 sm:py-6 ${
+            !sidebarOpen 
+              ? 'pl-16 pr-3 sm:pl-8 sm:pr-6 lg:pr-8' // Extra left padding on xs for button, normal on sm+ for collapsed sidebar
+              : 'px-3 sm:px-6 lg:px-8'
+          }`}>
             <Outlet />
           </div>
         </main>
@@ -42,7 +113,7 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <div className="w-16 h-16 border-4 border-purple-200 border-t-white rounded-full animate-spin mx-auto mb-4"></div>
             <div className="absolute inset-0 w-16 h-16 border-4 border-transparent border-b-blue-400 rounded-full animate-spin mx-auto" style={{ animationDelay: '0.15s', animationDuration: '1.5s' }}></div>
           </div>
-          <p className="text-white font-medium">Loading TaskFlow...</p>
+          <p className="text-white font-medium">Loading Magic Teams...</p>
         </div>
       </div>
     )
@@ -77,10 +148,13 @@ function App() {
                 <AppLayout />
               </ProtectedRoute>
             }>
-              <Route index element={<Dashboard />} />
-              <Route path="add-tasks" element={<AddTasks />} />
+              <Route index element={<AddTasks />} />
+              <Route path="new-task" element={<AddTasks />} />
               <Route path="tasks" element={<Tasks />} />
+              <Route path="teams" element={<Teams />} />
+              <Route path="dashboard" element={<Dashboard />} />
               <Route path="calendar" element={<Calendar />} />
+              <Route path="profile" element={<Profile />} />
             </Route>
             
             <Route path="/" element={

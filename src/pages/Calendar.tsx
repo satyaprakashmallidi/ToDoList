@@ -122,9 +122,9 @@ export const Calendar: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Calendar</h1>
+        <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Calendar</h1>
         <div className="flex items-center justify-center sm:justify-end gap-2 sm:gap-3">
           <button
             onClick={() => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1))}

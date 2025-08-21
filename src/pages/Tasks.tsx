@@ -211,7 +211,7 @@ export const Tasks: React.FC = () => {
   }, [location.state, tasks, navigate]);
 
   return (
-    <div className="space-y-3 sm:space-y-4 p-3 sm:p-0">
+    <div className="space-y-3 sm:space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Tasks</h1>

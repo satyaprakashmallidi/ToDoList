@@ -1,14 +1,23 @@
 import React, { useEffect, useState } from 'react'
-import { CheckCircle, Clock, TrendingUp, ListTodo } from 'lucide-react'
+import { CheckCircle, Clock, TrendingUp, ListTodo, Link, Users } from 'lucide-react'
 import { useSupabase } from '../hooks/useSupabase'
 import { useAuth } from '../contexts/AuthContext'
 import { Task } from '../types/tasks'
+import { supabase } from '../lib/supabase'
+
+interface InviteLink {
+  id: string
+  code: string
+  expires_at: string
+  created_at: string
+}
 
 export const Dashboard: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const { supabase } = useSupabase()
+  const [activeInvite, setActiveInvite] = useState<InviteLink | null>(null)
+  const { supabase: useSupabaseHook } = useSupabase()
   const { user } = useAuth()
 
   useEffect(() => {
@@ -19,7 +28,7 @@ export const Dashboard: React.FC = () => {
         setLoading(true)
         setError(null)
 
-        const { data, error } = await supabase
+        const { data, error } = await useSupabaseHook
           .from('tasks')
           .select('*')
           .eq('user_id', user.id)
@@ -27,6 +36,21 @@ export const Dashboard: React.FC = () => {
 
         if (error) throw error
         setTasks(data || [])
+
+        // Fetch active invite link
+        const { data: inviteData, error: inviteError } = await supabase
+          .from('team_invites')
+          .select('*')
+          .eq('created_by', user.id)
+          .gt('expires_at', new Date().toISOString())
+          .order('created_at', { ascending: false })
+          .limit(1)
+
+        if (inviteError) {
+          console.error('Error fetching invite:', inviteError)
+        } else if (inviteData && inviteData.length > 0) {
+          setActiveInvite(inviteData[0])
+        }
       } catch (error) {
         console.error('Error fetching dashboard stats:', error)
         setError('Failed to load dashboard statistics')
@@ -36,7 +60,7 @@ export const Dashboard: React.FC = () => {
     }
 
     fetchTaskStats()
-  }, [user?.id, supabase])
+  }, [user?.id, useSupabaseHook])
 
   const totalTasks = tasks.length
   const openTasks = tasks.filter(task => task.status === 'open').length
@@ -52,9 +76,9 @@ export const Dashboard: React.FC = () => {
 
   if (error) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-gray-600 mt-1">Welcome back! Here's what's happening.</p>
         </div>
         <div className="bg-red-50 border border-red-200 p-3 rounded-md text-red-700">
@@ -65,7 +89,7 @@ export const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-gray-600 mt-1">Welcome back! Here's what's happening.</p>
@@ -114,6 +138,7 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
       </div>
+
     </div>
   )
 }

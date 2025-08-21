@@ -112,10 +112,10 @@ export const Signup: React.FC = () => {
                 <div className="relative">
                   <label 
                     htmlFor="email" 
-                    className={`absolute left-4 transition-all duration-200 pointer-events-none ${
+                    className={`absolute transition-all duration-200 pointer-events-none z-10 ${
                       focusedField === 'email' || email 
-                        ? '-top-2 text-xs bg-white px-2 rounded text-gray-700' 
-                        : 'top-4 text-gray-500'
+                        ? 'left-4 -top-2 text-xs bg-white px-2 rounded text-gray-700' 
+                        : 'left-12 top-4 text-gray-500'
                     }`}
                   >
                     Email Address
@@ -142,10 +142,10 @@ export const Signup: React.FC = () => {
                 <div className="relative">
                   <label 
                     htmlFor="password" 
-                    className={`absolute left-4 transition-all duration-200 pointer-events-none ${
+                    className={`absolute transition-all duration-200 pointer-events-none z-10 ${
                       focusedField === 'password' || password 
-                        ? '-top-2 text-xs bg-white px-2 rounded text-gray-700' 
-                        : 'top-4 text-gray-500'
+                        ? 'left-4 -top-2 text-xs bg-white px-2 rounded text-gray-700' 
+                        : 'left-12 top-4 text-gray-500'
                     }`}
                   >
                     Password
