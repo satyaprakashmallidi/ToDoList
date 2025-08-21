@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Wand2, CheckCircle2, Sparkles, ArrowRight, Target } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useSupabase } from '../hooks/useSupabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Task, SubTask } from '../types/tasks';
@@ -15,6 +16,7 @@ export const AddTasks: React.FC = () => {
   const [showSubtasks, setShowSubtasks] = useState(false);
   const { supabase } = useSupabase();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   // Clear error when input changes
@@ -81,6 +83,12 @@ export const AddTasks: React.FC = () => {
 
       setTaskInput('');
       setSuccessMessage(`Task "${title}" created successfully${subtasks.length ? ' with ' + subtasks.length + ' subtasks' : ''}`);
+      
+      // Navigate to tasks page with the new task ID
+      setTimeout(() => {
+        navigate('/app/tasks', { state: { newTaskId: taskData.id, showDateModal: true } });
+      }, 500);
+      
       return taskData;
     } catch (error) {
       console.error('Error creating task:', error);
@@ -314,11 +322,15 @@ export const AddTasks: React.FC = () => {
                       id={`subtask-${index}`}
                       checked={subtask.selected}
                       onChange={() => handleSubtaskToggle(index)}
-                      className="w-5 h-5 text-purple-600 border-2 border-gray-300 rounded-md focus:ring-purple-500 focus:ring-offset-0 transition-colors duration-200"
+                      className="sr-only"
                     />
-                    {subtask.selected && (
-                      <CheckCircle2 className="absolute -inset-0.5 w-6 h-6 text-purple-500 animate-in zoom-in duration-200" />
-                    )}
+                    <div className="w-6 h-6 flex items-center justify-center">
+                      {subtask.selected ? (
+                        <CheckCircle2 className="w-6 h-6 text-purple-500 animate-in zoom-in duration-200" />
+                      ) : (
+                        <div className="w-6 h-6 border-2 border-gray-300 rounded-full hover:border-purple-400 transition-colors duration-200"></div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex-1">
                     <span className={`block text-lg transition-colors duration-200 ${
