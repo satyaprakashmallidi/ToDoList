@@ -248,6 +248,120 @@ export interface Database {
           joined_at?: string | null
         }
       }
+      chat_groups: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          admin_id: string
+          avatar_url: string | null
+          is_active: boolean
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          admin_id: string
+          avatar_url?: string | null
+          is_active?: boolean
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          admin_id?: string
+          avatar_url?: string | null
+          is_active?: boolean
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
+      chat_group_members: {
+        Row: {
+          id: string
+          group_id: string
+          user_id: string
+          role: 'admin' | 'member'
+          joined_at: string | null
+          left_at: string | null
+          is_active: boolean
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          user_id: string
+          role?: 'admin' | 'member'
+          joined_at?: string | null
+          left_at?: string | null
+          is_active?: boolean
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          user_id?: string
+          role?: 'admin' | 'member'
+          joined_at?: string | null
+          left_at?: string | null
+          is_active?: boolean
+        }
+      }
+      group_messages: {
+        Row: {
+          id: string
+          group_id: string
+          sender_id: string
+          content: string
+          message_type: 'text' | 'image' | 'file' | 'system'
+          file_url: string | null
+          file_name: string | null
+          file_size: number | null
+          reply_to_id: string | null
+          is_edited: boolean
+          is_deleted: boolean
+          deleted_by: string | null
+          deleted_at: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          sender_id: string
+          content: string
+          message_type?: 'text' | 'image' | 'file' | 'system'
+          file_url?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          reply_to_id?: string | null
+          is_edited?: boolean
+          is_deleted?: boolean
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          sender_id?: string
+          content?: string
+          message_type?: 'text' | 'image' | 'file' | 'system'
+          file_url?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          reply_to_id?: string | null
+          is_edited?: boolean
+          is_deleted?: boolean
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
     }
   }
 }

@@ -13,7 +13,7 @@ import { Tasks } from './pages/Tasks'
 import { Calendar } from './pages/Calendar'
 import { AddTasks } from './pages/AddTasks'
 import { Teams } from './pages/Teams'
-import { Chats } from './pages/Chats'
+import { Chat } from './pages/Chat'
 import { Profile } from './pages/Profile'
 import { DebugSupabase } from './pages/DebugSupabase'
 
@@ -156,7 +156,7 @@ function App() {
               <Route path="new-task" element={<AddTasks />} />
               <Route path="tasks" element={<Tasks />} />
               <Route path="teams" element={<Teams />} />
-              <Route path="chats" element={<Chats />} />
+              <Route path="chats" element={<Chat />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="calendar" element={<Calendar />} />
               <Route path="profile" element={<Profile />} />
