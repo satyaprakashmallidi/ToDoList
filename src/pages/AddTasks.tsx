@@ -241,8 +241,9 @@ export const AddTasks: React.FC = () => {
   return (
     <div className="space-y-3 sm:space-y-4">
       {/* Main Content */}
-      <div className="flex flex-col items-center justify-center text-center px-4 sm:px-6 min-h-[60vh]">
-        <h2 className="text-xl sm:text-2xl lg:text-3xl font-medium text-gray-900 mb-6 sm:mb-8">Create your task.</h2>
+      <div className="flex flex-col items-center justify-center text-center px-4 sm:px-6 min-h-[70vh] py-8">
+        <div className="w-full max-w-4xl">
+          <h2 className="text-xl sm:text-2xl lg:text-3xl font-medium text-gray-900 mb-8 sm:mb-12">Create your task.</h2>
         
         {/* Error/Success Messages */}
         {error && (
@@ -578,6 +579,7 @@ export const AddTasks: React.FC = () => {
             </div>
           </div>
         )}
+        </div>
       </div>
 
     </div>

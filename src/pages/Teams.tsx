@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { CustomAlert } from '../components/CustomAlert'
 
 interface InviteCode {
   id: string
@@ -35,6 +36,34 @@ export const Teams: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loadingMembers, setLoadingMembers] = useState(false)
+  const [alert, setAlert] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+    showCancel?: boolean;
+    onConfirm?: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info'
+  })
+
+  const showAlert = (title: string, message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', showCancel: boolean = false, onConfirm?: () => void) => {
+    setAlert({
+      isOpen: true,
+      title,
+      message,
+      type,
+      showCancel,
+      onConfirm
+    })
+  }
+
+  const closeAlert = () => {
+    setAlert(prev => ({ ...prev, isOpen: false }))
+  }
 
   // Check for existing invite link on component mount
   useEffect(() => {
@@ -60,13 +89,14 @@ export const Teams: React.FC = () => {
       if (data && data.length > 0) {
         const invite = data[0]
         
-        // Check if the invite is still active
+        // Always set the latest invite (whether active or expired)
+        setCurrentInvite(invite)
+        
+        // Only set the code if the invite is still active
         if (new Date(invite.expires_at) > new Date()) {
-          setCurrentInvite(invite)
           setInviteCode(invite.code)
         } else {
-          // Invite expired, clear it
-          setCurrentInvite(null)
+          // Invite expired, but don't clear the invite - we need it for team persistence
           setInviteCode('')
         }
       }
@@ -106,31 +136,48 @@ export const Teams: React.FC = () => {
 
       if (error) throw error
 
-      // Auto-add admin as team member
-      const { error: memberError } = await supabase
-        .from('team_members')
-        .insert({
-          user_id: user.id,
-          team_invite_id: data.id,
-          admin_id: user.id
-        })
+      // Only auto-add admin as team member if this is a brand new team (no existing members)
+      const hasExistingTeam = teamMembers.length > 0
+      
+      if (!hasExistingTeam) {
+        const { error: memberError } = await supabase
+          .from('team_members')
+          .insert({
+            user_id: user.id,
+            team_invite_id: data.id,
+            admin_id: user.id
+          })
 
-      if (memberError) {
-        console.warn('Admin auto-join failed:', memberError)
-        // Don't throw error here, just log it
+        if (memberError) {
+          console.warn('Admin auto-join failed:', memberError)
+          // Don't throw error here, just log it
+        }
+      } else {
+        // For existing teams, update all existing members to use the new invite ID
+        // This maintains team continuity across invite code regenerations
+        const { error: updateError } = await supabase
+          .from('team_members')
+          .update({ team_invite_id: data.id })
+          .eq('admin_id', user.id)
+
+        if (updateError) {
+          console.warn('Failed to update existing team members:', updateError)
+        }
       }
 
       setInviteCode(code)
       setCurrentInvite(data)
       
-      // Refresh team members list to show the admin
+      // Refresh team members list
       await loadTeamMembers()
       
       // Show success message
-      console.log('Invite code generated successfully')
+      const message = hasExistingTeam ? 'New invite code generated for existing team!' : 'Team invite code generated successfully!'
+      showAlert('Success', message, 'success')
+      console.log(message)
     } catch (error) {
       console.error('Error generating invite code:', error)
-      alert('Failed to generate invite code. Please try again.')
+      showAlert('Error', 'Failed to generate invite code. Please try again.', 'error')
     } finally {
       setLoading(false)
     }
@@ -202,13 +249,23 @@ export const Teams: React.FC = () => {
   const removeMember = async (memberId: string, memberUserId: string) => {
     // Prevent admin from removing themselves
     if (memberUserId === user?.id) {
-      alert('You cannot remove yourself from the team.')
+      showAlert('Not Allowed', 'You cannot remove yourself from the team.', 'warning')
       return
     }
 
-    if (!confirm('Are you sure you want to remove this team member?')) {
-      return
-    }
+    // Show confirmation dialog
+    showAlert(
+      'Confirm Removal',
+      'Are you sure you want to remove this team member?',
+      'warning',
+      true,
+      async () => {
+        await performRemoveMember(memberId, memberUserId)
+      }
+    )
+  }
+
+  const performRemoveMember = async (memberId: string, memberUserId: string) => {
 
     try {
       const { error } = await supabase
@@ -221,56 +278,79 @@ export const Teams: React.FC = () => {
 
       // Refresh team members list
       await loadTeamMembers()
-      alert('Team member removed successfully')
+      showAlert('Success', 'Team member removed successfully', 'success')
     } catch (error) {
       console.error('Error removing team member:', error)
-      alert('Failed to remove team member')
+      showAlert('Error', 'Failed to remove team member', 'error')
     }
   }
 
   const joinTeam = async () => {
     if (joinCode.length !== 6) {
-      alert('Please enter a 6-digit team code.')
+      showAlert('Invalid Code', 'Please enter a 6-digit team code.', 'warning')
       return
     }
 
     if (!user) {
-      alert('You must be logged in to join a team.')
+      showAlert('Authentication Required', 'You must be logged in to join a team.', 'warning')
       return
     }
 
     try {
+      console.log('Attempting to join team with code:', joinCode)
+      
       // First, find the invite code
       const { data: inviteData, error: inviteError } = await supabase
         .from('team_invites')
         .select('*')
-        .eq('code', joinCode)
+        .eq('code', joinCode.toUpperCase())
         .single()
 
-      if (inviteError || !inviteData) {
-        alert('Invalid team code.')
+      if (inviteError) {
+        console.error('Invite lookup error:', inviteError)
+        if (inviteError.code === 'PGRST116') {
+          showAlert('Invalid Code', 'Invalid team code. Please check the code and try again.', 'error')
+        } else {
+          showAlert('Lookup Error', 'Error looking up team code. Please try again.', 'error')
+        }
         return
       }
+
+      if (!inviteData) {
+        showAlert('Invalid Code', 'Invalid team code. Please check the code and try again.', 'error')
+        return
+      }
+
+      console.log('Found invite:', inviteData)
 
       // Check if the invite is expired
       if (new Date(inviteData.expires_at) <= new Date()) {
-        alert('This team code has expired.')
+        showAlert('Expired Code', 'This team code has expired. Please ask the team admin to generate a new code.', 'warning')
         return
       }
 
-      // Check if user is already a member
+      // Check if user is already a member of ANY team by this admin (team continuity)
       const { data: existingMember } = await supabase
         .from('team_members')
         .select('*')
         .eq('user_id', user.id)
-        .eq('team_invite_id', inviteData.id)
+        .eq('admin_id', inviteData.created_by)
         .single()
 
       if (existingMember) {
-        alert('You are already a member of this team.')
+        showAlert('Already a Member', 'You are already a member of this team.', 'info')
         setJoinCode('')
         return
       }
+
+      // Check if user is trying to join their own team
+      if (inviteData.created_by === user.id) {
+        showAlert('Invalid Action', 'You cannot join your own team using an invite code.', 'warning')
+        setJoinCode('')
+        return
+      }
+
+      console.log('Adding user to team...')
 
       // Add user as team member
       const { error: memberError } = await supabase
@@ -281,18 +361,23 @@ export const Teams: React.FC = () => {
           admin_id: inviteData.created_by
         })
 
-      if (memberError) throw memberError
+      if (memberError) {
+        console.error('Member insert error:', memberError)
+        throw memberError
+      }
 
-      alert('Successfully joined the team!')
+      showAlert('Success!', 'Successfully joined the team!', 'success')
       setJoinCode('')
+      console.log('Successfully joined team')
     } catch (error) {
       console.error('Error joining team:', error)
-      alert('Failed to join team. Please try again.')
+      showAlert('Join Failed', `Failed to join team: ${error.message || 'Please try again.'}`, 'error')
     }
   }
 
   const isLinkActive = currentInvite && new Date(currentInvite.expires_at) > new Date()
-  const isLinkDisabled = isLinkActive
+  const hasExistingTeam = teamMembers.length > 0
+  const isLinkDisabled = false // Always allow generating new codes
 
   return (
     <div className="space-y-3 sm:space-y-4">
@@ -322,15 +407,22 @@ export const Teams: React.FC = () => {
             <div className="space-y-4">
               <button 
                 onClick={generateTeamInviteCode} 
-                disabled={isLinkDisabled || loading}
+                disabled={loading}
                 className={`w-full px-4 py-2 sm:py-3 rounded-md font-medium transition-colors duration-200 flex items-center justify-center touch-manipulation ${
-                  isLinkDisabled 
+                  loading 
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                    : hasExistingTeam && !isLinkActive
+                    ? 'bg-orange-600 text-white hover:bg-orange-700'
+                    : hasExistingTeam && isLinkActive
+                    ? 'bg-green-600 text-white hover:bg-green-700'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
                 <Mail className="w-4 h-4 mr-2" />
-                {loading ? 'Generating...' : isLinkDisabled ? 'Code is active for 15 days' : 'Create Team Invite Code'}
+                {loading ? 'Generating...' : 
+                 hasExistingTeam && !isLinkActive ? 'Generate New Code for Team' :
+                 hasExistingTeam && isLinkActive ? 'Generate New Code (Current Active)' :
+                 'Create Team Invite Code'}
               </button>
 
               {inviteCode && (
@@ -355,9 +447,20 @@ export const Teams: React.FC = () => {
                       )}
                     </button>
                   </div>
-                  <p className="text-xs text-gray-600">
-                    Share this 6-digit code with team members to invite them to join your team.
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-600">
+                      Share this 6-digit code with team members to invite them to join your team.
+                    </p>
+                    {currentInvite && (
+                      <p className="text-xs text-gray-500">
+                        {isLinkActive ? (
+                          <>✅ Code expires on {new Date(currentInvite.expires_at).toLocaleDateString()}</>
+                        ) : (
+                          <>⚠️ Code expired on {new Date(currentInvite.expires_at).toLocaleDateString()}. Generate a new code above.</>
+                        )}
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -482,6 +585,17 @@ export const Teams: React.FC = () => {
             )}
         </div>
       </div>
+
+      {/* Custom Alert */}
+      <CustomAlert
+        isOpen={alert.isOpen}
+        onClose={closeAlert}
+        title={alert.title}
+        message={alert.message}
+        type={alert.type}
+        showCancel={alert.showCancel}
+        onConfirm={alert.onConfirm}
+      />
     </div>
   )
 }
