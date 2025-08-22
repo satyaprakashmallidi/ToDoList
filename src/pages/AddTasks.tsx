@@ -1,25 +1,28 @@
 import React, { useState } from 'react';
-import { Send, Plus, Upload, Settings } from 'lucide-react';
+import { Send, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSupabase } from '../hooks/useSupabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Task, SubTask } from '../types/tasks';
-import { generateSubtasks } from '../lib/ai';
+import { generateSubtasks, determineOptimalSteps } from '../lib/ai';
 
 export const AddTasks: React.FC = () => {
   const [taskInput, setTaskInput] = useState('');
-  const [numSteps, setNumSteps] = useState(3);
+  const [numSteps, setNumSteps] = useState('ai-decide' as string | number);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [generatedSubtasks, setGeneratedSubtasks] = useState<Array<{ title: string; selected: boolean }>>([]);
   const [showSubtasks, setShowSubtasks] = useState(false);
-  const [showStepsDropdown, setShowStepsDropdown] = useState(false);
+  const [showPlusOptions, setShowPlusOptions] = useState(false);
+  const [showAIBreakdown, setShowAIBreakdown] = useState(false);
+  const [showStepOptions, setShowStepOptions] = useState(false);
+  const [checkedSteps, setCheckedSteps] = useState<{ [key: number]: boolean }>({});
   const { supabase } = useSupabase();
   const { user } = useAuth();
   const navigate = useNavigate();
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const dropdownRef = React.useRef<HTMLDivElement>(null);
+  const stepsContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Clear error when input changes
   React.useEffect(() => {
@@ -39,38 +42,50 @@ export const AddTasks: React.FC = () => {
     inputRef.current?.focus();
   }, []);
 
-  // Close dropdown when clicking outside
+  // Close all options with Escape key
   React.useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowStepsDropdown(false);
-      }
-    };
-
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setShowStepsDropdown(false);
+        setShowPlusOptions(false);
+        setShowAIBreakdown(false);
+        setShowStepOptions(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
     document.addEventListener('keydown', handleEscape);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
   }, []);
 
-  const handleStepsSelection = async (steps: number) => {
+  const handleStepsSelection = (steps: string | number) => {
     setNumSteps(steps);
-    setShowStepsDropdown(false);
-    if (taskInput.trim()) {
-      await handleAIBreakdown();
+    setShowStepOptions(false);
+    // Remove auto-generation - only generate when user clicks send
+  };
+
+  const handleAIBreakdownClick = () => {
+    setShowPlusOptions(false);
+    setShowAIBreakdown(true);
+  };
+
+  const handlePlusButtonClick = () => {
+    if (showPlusOptions || showAIBreakdown) {
+      // Close everything if any option is open
+      setShowPlusOptions(false);
+      setShowAIBreakdown(false);
+      setShowStepOptions(false);
     } else {
-      // If no input, focus on the input field to prompt user
-      inputRef.current?.focus();
+      // Open first level options
+      setShowPlusOptions(true);
     }
   };
+
+  const handleAIWillDecideClick = () => {
+    setShowStepOptions(!showStepOptions);
+  };
+
+
 
   const createTask = async (title: string, subtasks: string[] = []) => {
     if (!user) return;
@@ -136,7 +151,16 @@ export const AddTasks: React.FC = () => {
     
     setLoading(true);
     try {
-      const subtasks = await generateSubtasks(taskInput, numSteps);
+      let finalStepCount: number;
+      
+      if (numSteps === 'ai-decide') {
+        // Let AI decide the optimal number of steps
+        finalStepCount = await determineOptimalSteps(taskInput);
+      } else {
+        finalStepCount = numSteps as number;
+      }
+      
+      const subtasks = await generateSubtasks(taskInput, finalStepCount);
       setError(null);
       setGeneratedSubtasks(subtasks.map(title => ({ title, selected: true })));
       setShowSubtasks(true);
@@ -154,6 +178,13 @@ export const AddTasks: React.FC = () => {
         i === index ? { ...subtask, selected: !subtask.selected } : subtask
       )
     );
+  };
+
+  const handleStepCheck = (index: number, checked: boolean) => {
+    setCheckedSteps(prev => ({
+      ...prev,
+      [index]: checked
+    }));
   };
 
   // Helper function to renumber subtasks sequentially
@@ -180,6 +211,8 @@ export const AddTasks: React.FC = () => {
     setLoading(true);
     try {
       setError(null);
+      
+      // If subtasks are already generated and shown, create task with selected subtasks
       if (showSubtasks && generatedSubtasks.length > 0) {
         const selectedSubtasks = generatedSubtasks
           .filter(st => st.selected)
@@ -189,13 +222,14 @@ export const AddTasks: React.FC = () => {
         const renumberedSubtasks = renumberSubtasks(selectedSubtasks);
         
         await createTask(taskInput, renumberedSubtasks);
+        setShowSubtasks(false);
+        setGeneratedSubtasks([]);
+        setTaskInput('');
+        setSuccessMessage('Task created successfully!');
       } else {
-        await createTask(taskInput);
+        // Generate AI breakdown first, then show subtasks for selection
+        await handleAIBreakdown();
       }
-      setShowSubtasks(false);
-      setGeneratedSubtasks([]);
-      setTaskInput('');
-      setSuccessMessage('Task created successfully!');
     } catch (error) {
       console.error('Error adding task:', error);
       setError(error instanceof Error ? error.message : 'Failed to create task');
@@ -205,22 +239,15 @@ export const AddTasks: React.FC = () => {
   };
 
   return (
-    <div style={{ backgroundColor: '#f8fafc' }} className="min-h-screen">
-      {/* Header */}
-      <header className="flex items-center p-4 font-bold text-lg text-gray-900">
-        Magic Teams
-        <span className="ml-1 text-sm text-gray-600">▼</span>
-      </header>
-
-
+    <div className="space-y-3 sm:space-y-4">
       {/* Main Content */}
-      <div className="flex flex-col items-center justify-center text-center" style={{ height: '80vh' }}>
-        <h1 className="text-2xl font-medium text-gray-900">Create New Task.</h1>
+      <div className="flex flex-col items-center justify-center text-center px-4 sm:px-6 min-h-[60vh]">
+        <h2 className="text-xl sm:text-2xl lg:text-3xl font-medium text-gray-900 mb-6 sm:mb-8">Create your task.</h2>
         
         {/* Error/Success Messages */}
         {error && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg max-w-md">
-            <div className="flex items-center justify-between">
+          <div className="mt-4 p-3 sm:p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg max-w-md w-full">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
               <span className="text-sm font-medium">{error}</span>
               {error.includes('AI') || error.includes('generate') || error.includes('Gemini') ? (
                 <button
@@ -229,7 +256,7 @@ export const AddTasks: React.FC = () => {
                     handleAIBreakdown();
                   }}
                   disabled={loading}
-                  className="ml-2 px-2 py-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 rounded border border-red-300 disabled:opacity-50"
+                  className="px-2 py-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 rounded border border-red-300 disabled:opacity-50 transition-colors"
                 >
                   Retry
                 </button>
@@ -239,122 +266,316 @@ export const AddTasks: React.FC = () => {
         )}
 
         {successMessage && (
-          <div className="mt-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg max-w-md">
+          <div className="mt-4 p-3 sm:p-4 bg-green-50 border border-green-200 text-green-700 rounded-lg max-w-md w-full">
             <span className="text-sm font-medium">{successMessage}</span>
           </div>
         )}
 
-        {/* Search Bar - ChatGPT Style */}
-        <div className="mt-5 w-full max-w-2xl mx-auto">
-          <div className="relative bg-white shadow-sm flex w-full cursor-text flex-col items-center justify-center overflow-clip bg-clip-padding rounded-[28px] border border-gray-200">
-            <div className="relative flex min-h-14 w-full items-center px-4">
-              <div className="relative mr-3">
-                <button 
-                  type="button" 
-                  onClick={() => setShowStepsDropdown(!showStepsDropdown)}
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-gray-500 hover:text-gray-700 transition-colors"
-                >
-                  <Plus className="w-5 h-5" />
-                </button>
-
-                {/* Steps Dropdown */}
-                {showStepsDropdown && (
-                  <div 
-                    ref={dropdownRef}
-                    className="absolute top-full mt-2 bg-white border border-gray-200 rounded-lg shadow-lg min-w-[200px]"
-                    style={{ zIndex: 20 }}
-                  >
-                    <div className="p-2 border-b border-gray-100">
-                      <div className="text-xs text-gray-500 mb-2">Select number of steps to generate</div>
-                      {[2, 3, 4, 5, 6].map((steps) => (
-                        <button
-                          key={steps}
-                          onClick={() => handleStepsSelection(steps)}
-                          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded transition-colors flex items-center justify-between"
-                        >
-                          <span>{steps} Steps</span>
-                          <span className="text-xs text-gray-400">AI breakdown</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 text-gray-900 max-h-52 overflow-auto">
-                <input 
-                  ref={inputRef}
-                  type="text" 
-                  placeholder="Ask anything" 
-                  value={taskInput}
-                  onChange={(e) => setTaskInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleAddTask();
-                    }
-                  }}
-                  className="w-full border-none outline-none text-base bg-transparent text-gray-900 placeholder-gray-400 py-3" 
-                />
-              </div>
-              <div className="ml-3">
-                <button 
-                  aria-label="Send" 
+        {/* Multi-Level Input Bar */}
+        <div className="w-full max-w-2xl mx-auto relative">
+          {/* Main Input Bar Container */}
+          <div className={`bg-white border border-gray-200 transition-all duration-600 ease-in-out ${
+            showAIBreakdown 
+              ? 'shadow-sm' 
+              : 'shadow-sm focus-within:shadow-lg'
+          }`} style={{
+            borderRadius: showAIBreakdown ? '1rem' : '2rem',
+            transition: 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1), border-radius 0.6s cubic-bezier(0.4, 0, 0.2, 1)'
+          }}>
+            
+            {/* Main Input Bar */}
+            <form 
+              className="p-2 flex items-center gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddTask();
+              }}
+            >
+              {/* Plus Button */}
+              <div className="flex items-center gap-3 flex-shrink-0 text-gray-500 pl-2">
+                <button
                   type="button"
-                  onClick={handleAddTask}
-                  disabled={loading || !taskInput.trim()}
-                  className="relative flex h-9 items-center justify-center rounded-full w-9 text-gray-500 hover:text-gray-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={handlePlusButtonClick}
+                  className={`border-0 bg-white text-gray-600 p-2 rounded-full cursor-pointer leading-none transition-all duration-400 ease-in-out hover:bg-blue-50 hover:text-blue-600 hover:shadow-sm ${
+                    showPlusOptions || showAIBreakdown
+                      ? 'transform rotate-45' 
+                      : ''
+                  }`}
+                  title="Options"
                 >
-                  <div className="flex items-center justify-center">
-                    {loading ? (
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
-                    ) : (
-                      <Send className="w-5 h-5" />
-                    )}
-                  </div>
+                  <Plus className="w-4 h-4 transition-transform duration-400 ease-in-out" />
                 </button>
+              </div>
+
+              {/* Input */}
+              <input
+                ref={inputRef}
+                className="appearance-none border-0 outline-0 py-1.5 flex-1 text-sm bg-transparent text-gray-900 placeholder-gray-400"
+                type="text"
+                placeholder="Describe your task..."
+                value={taskInput}
+                onChange={(e) => setTaskInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAddTask();
+                  }
+                }}
+              />
+
+              {/* Send Button */}
+              <button
+                type="submit"
+                disabled={loading || !taskInput.trim()}
+                className="flex-shrink-0 border-0 rounded-full py-2 px-2.5 bg-blue-500 text-white cursor-pointer leading-none transition-all duration-150 hover:brightness-105 active:translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100 disabled:active:translate-y-0 mr-1"
+                title="Create Task"
+              >
+                <span className="sr-only">Create Task</span>
+                {loading ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+            </form>
+
+            {/* AI Breakdown Steps Extension - No border separator */}
+            <div className={`transition-all duration-600 cubic-bezier(0.4, 0, 0.2, 1) ${
+              showAIBreakdown ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'
+            }`} style={{ overflow: showStepOptions ? 'visible' : 'hidden' }}>
+              <div className="px-4 py-3 relative" style={{
+                transform: showAIBreakdown ? 'translateY(0)' : 'translateY(-10px)',
+                transition: 'transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1)'
+              }}>
+                <div className="flex items-center justify-start">
+                  <div className="relative inline-block">
+                    <button
+                      type="button"
+                      onClick={handleAIWillDecideClick}
+                      className={`px-4 py-2 text-sm font-medium rounded-full border transition-all duration-300 ${
+                        numSteps === 'ai-decide' 
+                          ? 'bg-purple-500 text-white border-purple-500' 
+                          : typeof numSteps === 'number'
+                          ? 'bg-blue-500 text-white border-blue-500'
+                          : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-100'
+                      }`}
+                    >
+                      {numSteps === 'ai-decide' ? 'AI will Decide' : `${numSteps} Steps`}
+                    </button>
+
+                    {/* Step Options Connected Directly to Button */}
+                    {showStepOptions && (
+                      <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-gray-50 border border-gray-200 rounded-xl shadow-lg p-3 z-[60] animate-in slide-in-from-left-2 duration-300 w-48 sm:w-56">
+                        {/* Small connector triangle pointing left to button - centered vertically */}
+                        <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-white border-l border-t border-gray-200 transform rotate-45"></div>
+                      
+                      <div className="flex flex-col gap-1.5">
+                        {/* Let AI Decide Option */}
+                        <button
+                          type="button"
+                          onClick={() => handleStepsSelection('ai-decide')}
+                          className={`px-3 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all duration-300 text-left ${
+                            numSteps === 'ai-decide' 
+                              ? 'bg-purple-500 text-white shadow-sm' 
+                              : 'bg-gray-50 text-purple-500 hover:bg-purple-500 hover:text-white hover:shadow-sm'
+                          }`}
+                        >
+                          ✨ Let AI Decide
+                        </button>
+                        
+                        {/* Manual Step Options */}
+                        {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((steps) => (
+                          <button
+                            key={steps}
+                            type="button"
+                            onClick={() => handleStepsSelection(steps)}
+                            className={`px-3 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all duration-300 text-left ${
+                              numSteps === steps 
+                                ? 'bg-blue-500 text-white shadow-sm' 
+                                : 'bg-gray-50 text-blue-500 hover:bg-blue-500 hover:text-white hover:shadow-sm'
+                            }`}
+                          >
+                            {steps} Steps
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
+
+          {/* First Level Options - Positioned below plus button */}
+          {showPlusOptions && !showAIBreakdown && (
+            <div className="absolute left-6 top-full mt-1 z-50 animate-in slide-in-from-top-2 duration-300">
+              {/* Small connector triangle pointing to plus button */}
+              <div className="absolute -top-1 left-4 w-2 h-2 bg-white border-l border-t border-gray-200 transform rotate-45"></div>
+              
+              <button
+                type="button"
+                onClick={handleAIBreakdownClick}
+                className="px-4 py-2 text-sm font-medium text-blue-600 bg-white border border-blue-500 rounded-lg hover:bg-blue-50 transition-all duration-300 shadow-sm whitespace-nowrap"
+              >
+                AI Breakdown Steps
+              </button>
+            </div>
+          )}
         </div>
 
 
-        {/* Subtasks Selection */}
+        {/* Generated Tasks Section - Enhanced Size & Fixed Scrolling */}
         {showSubtasks && generatedSubtasks.length > 0 && (
-          <div className="mt-6 bg-white border border-gray-200 rounded-lg p-4 shadow max-w-2xl mx-auto">
-            <h2 className="text-lg font-semibold text-gray-900 mb-3">AI Generated Subtasks</h2>
-            <p className="text-gray-600 mb-4 text-sm">Select the steps you want to include in your task</p>
-            
-            <div className="space-y-2 mb-4">
-              {generatedSubtasks.map((subtask, index) => (
-                <label
-                  key={index}
-                  className={`flex items-start gap-2 p-3 border rounded cursor-pointer transition-all ${
-                    subtask.selected
-                      ? 'border-blue-300 bg-blue-50'
-                      : 'border-gray-200 bg-white hover:border-blue-200'
-                  }`}
+          <div className="mt-8 w-full max-w-[95%] sm:max-w-6xl mx-auto px-2 sm:px-4">
+            <div className="bg-white border border-gray-200 rounded-2xl shadow-lg overflow-hidden">
+              {/* Header */}
+              <div className="px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                      Generated Task Steps
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      Review and customize your AI-generated task breakdown
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                      <span>{generatedSubtasks.filter(st => st.selected).length} of {generatedSubtasks.length} selected</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const allSelected = generatedSubtasks.every(st => st.selected);
+                        setGeneratedSubtasks(prev => 
+                          prev.map(st => ({ ...st, selected: !allSelected }))
+                        );
+                      }}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700 px-3 py-2 hover:bg-blue-50 rounded-lg transition-colors ml-4"
+                    >
+                      {generatedSubtasks.every(st => st.selected) ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Content - Fixed Height with Smooth Scrolling */}
+              <div className="relative" style={{ height: 'clamp(400px, 50vh, 500px)' }}>
+                <div 
+                  ref={stepsContainerRef}
+                  className="h-full overflow-y-auto overflow-x-hidden px-6 py-4 scroll-smooth"
+                  style={{
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: '#cbd5e1 transparent'
+                  }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={subtask.selected}
-                    onChange={() => handleSubtaskToggle(index)}
-                    className="mt-0.5 w-3 h-3 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <span className={`text-left text-sm ${subtask.selected ? 'text-blue-900 font-medium' : 'text-gray-700'}`}>
-                    {subtask.title}
-                  </span>
-                </label>
-              ))}
+                  <div className="space-y-3 pb-8">
+                    {generatedSubtasks.map((subtask, index) => (
+                      <div
+                        key={index}
+                        id={`step-${index}`}
+                        className={`group rounded-xl border will-change-transform ${
+                          subtask.selected
+                            ? 'border-blue-200 bg-blue-50/60 shadow-sm'
+                            : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                        }`}
+                      >
+                        <label 
+                          className="flex items-center gap-4 p-4 sm:p-5 cursor-pointer touch-manipulation"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleSubtaskToggle(index);
+                          }}
+                        >
+                          {/* Enhanced Checkbox */}
+                          <div className="flex-shrink-0">
+                            <input
+                              type="checkbox"
+                              checked={subtask.selected}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleSubtaskToggle(index);
+                              }}
+                              className="sr-only"
+                            />
+                            <div 
+                              className={`w-5 h-5 rounded border-2 flex items-center justify-center transform-gpu ${
+                                subtask.selected
+                                  ? 'bg-blue-600 border-blue-600'
+                                  : 'border-gray-300 group-hover:border-blue-400'
+                              }`}
+                            >
+                              {subtask.selected && (
+                                <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Step Content */}
+                          <div className="flex-1 min-w-0">
+                            <span className={`block text-base leading-relaxed ${
+                              subtask.selected 
+                                ? 'text-blue-900 font-medium' 
+                                : 'text-gray-700 group-hover:text-gray-900'
+                            }`}>
+                              {subtask.title}
+                            </span>
+                          </div>
+                          
+                          {/* Step Number Badge */}
+                          <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transform-gpu ${
+                            subtask.selected 
+                              ? 'bg-blue-100 text-blue-700' 
+                              : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200'
+                          }`}>
+                            {index + 1}
+                          </div>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Scroll fade indicators - Fixed positioning */}
+                <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-white via-white/80 to-transparent pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white via-white/80 to-transparent pointer-events-none"></div>
+              </div>
+
+              {/* Action Footer */}
+              <div className="px-6 py-5 bg-gray-50/50 border-t border-gray-200">
+                <div className="flex flex-col sm:flex-row gap-4 sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSubtasks(false);
+                      setGeneratedSubtasks([]);
+                    }}
+                    className="px-6 py-3 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddTask}
+                    disabled={loading || !generatedSubtasks.some(st => st.selected)}
+                    className="px-8 py-3 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-200 shadow-sm"
+                  >
+                    {loading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                        Creating Task...
+                      </div>
+                    ) : (
+                      `Create Task with ${generatedSubtasks.filter(st => st.selected).length} Steps`
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
-            
-            <button
-              type="button"
-              onClick={handleAddTask}
-              disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
-            >
-              {loading ? 'Creating...' : 'Create Task with Selected Steps'}
-            </button>
           </div>
         )}
       </div>

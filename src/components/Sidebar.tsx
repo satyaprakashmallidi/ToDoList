@@ -1,6 +1,6 @@
 import React from 'react'
 import { NavLink, type NavLinkRenderProps } from 'react-router-dom'
-import { Home, PlusSquare, CheckSquare, Calendar, Users, User, Sparkles, X, Menu } from 'lucide-react'
+import { Home, PlusSquare, CheckSquare, Calendar, Users, User, Sparkles, X, Menu, MessageCircle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface SidebarProps {
@@ -13,12 +13,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
   const { user } = useAuth()
   
   const navigation = [
-    { name: 'New Task', href: '/app', icon: PlusSquare, subtitle: 'Create new tasks', label: 'Add New Tasks' },
-    { name: 'Dashboard', href: '/app/dashboard', icon: Home, subtitle: 'Overview & analytics', label: 'Go to Dashboard' },
-    { name: 'Teams', href: '/app/teams', icon: Users, subtitle: 'Manage teams', label: 'View Teams' },
-    { name: 'Tasks', href: '/app/tasks', icon: CheckSquare, subtitle: 'View all tasks', label: 'View Tasks' },
-    { name: 'Calendar', href: '/app/calendar', icon: Calendar, subtitle: 'Schedule view', label: 'View Calendar' },
-    { name: 'Profile', href: '/app/profile', icon: User, subtitle: 'Account settings', label: 'View Profile' },
+    { name: 'New Task', href: '/app', icon: PlusSquare, label: 'Add New Tasks' },
+    { name: 'Dashboard', href: '/app/dashboard', icon: Home, label: 'Go to Dashboard' },
+    { name: 'Teams', href: '/app/teams', icon: Users, label: 'View Teams' },
+    { name: 'Tasks', href: '/app/tasks', icon: CheckSquare, label: 'View Tasks' },
+    { name: 'Chats', href: '/app/chats', icon: MessageCircle, label: 'View Chats' },
+    { name: 'Calendar', href: '/app/calendar', icon: Calendar, label: 'View Calendar' },
+    { name: 'Profile', href: '/app/profile', icon: User, label: 'View Profile' },
   ]
 
   // Handle escape key to close sidebar on mobile
@@ -116,7 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
                           (currentPath === '/app' || currentPath === '/app/new-task') :
                           isActive;
                         
-                        return `flex items-start gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
+                        return `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all duration-200 ${
                           isExactlyActive
                             ? 'bg-blue-50 text-blue-700 border border-blue-200'
                             : 'text-gray-700 hover:bg-gray-50'
@@ -126,10 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
                       aria-label={item.label}
                     >
                       <item.icon className="w-5 h-5 text-gray-500" />
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-medium leading-tight">{item.name}</span>
-                        <span className="text-xs text-gray-500 leading-tight mt-0.5">{item.subtitle}</span>
-                      </div>
+                      <span className="font-medium leading-tight">{item.name}</span>
                     </NavLink>
                   ))}
                 </div>

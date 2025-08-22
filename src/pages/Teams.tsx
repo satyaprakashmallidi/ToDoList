@@ -10,7 +10,7 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
-interface InviteLink {
+interface InviteCode {
   id: string
   code: string
   expires_at: string
@@ -28,10 +28,10 @@ interface TeamMember {
 
 export const Teams: React.FC = () => {
   const { user } = useAuth()
-  const [inviteLink, setInviteLink] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [copied, setCopied] = useState(false)
-  const [currentInvite, setCurrentInvite] = useState<InviteLink | null>(null)
+  const [currentInvite, setCurrentInvite] = useState<InviteCode | null>(null)
   const [loading, setLoading] = useState(false)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loadingMembers, setLoadingMembers] = useState(false)
@@ -52,7 +52,6 @@ export const Teams: React.FC = () => {
         .from('team_invites')
         .select('*')
         .eq('created_by', user.id)
-        .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false })
         .limit(1)
 
@@ -60,8 +59,16 @@ export const Teams: React.FC = () => {
 
       if (data && data.length > 0) {
         const invite = data[0]
-        setCurrentInvite(invite)
-        setInviteLink(`https://magicteams.app/join/${invite.code}`)
+        
+        // Check if the invite is still active
+        if (new Date(invite.expires_at) > new Date()) {
+          setCurrentInvite(invite)
+          setInviteCode(invite.code)
+        } else {
+          // Invite expired, clear it
+          setCurrentInvite(null)
+          setInviteCode('')
+        }
       }
     } catch (error) {
       console.error('Error checking existing invite:', error)
@@ -78,7 +85,7 @@ export const Teams: React.FC = () => {
     return result
   }
 
-  const generateInviteLink = async () => {
+  const generateTeamInviteCode = async () => {
     if (!user) return
     
     setLoading(true)
@@ -99,15 +106,31 @@ export const Teams: React.FC = () => {
 
       if (error) throw error
 
-      const link = `https://magicteams.app/join/${code}`
-      setInviteLink(link)
+      // Auto-add admin as team member
+      const { error: memberError } = await supabase
+        .from('team_members')
+        .insert({
+          user_id: user.id,
+          team_invite_id: data.id,
+          admin_id: user.id
+        })
+
+      if (memberError) {
+        console.warn('Admin auto-join failed:', memberError)
+        // Don't throw error here, just log it
+      }
+
+      setInviteCode(code)
       setCurrentInvite(data)
       
+      // Refresh team members list to show the admin
+      await loadTeamMembers()
+      
       // Show success message
-      console.log('Invite link generated successfully')
+      console.log('Invite code generated successfully')
     } catch (error) {
-      console.error('Error generating invite link:', error)
-      alert('Failed to generate invite link. Please try again.')
+      console.error('Error generating invite code:', error)
+      alert('Failed to generate invite code. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -138,24 +161,51 @@ export const Teams: React.FC = () => {
       setLoadingMembers(true)
 
       // Get team members who joined through this user's invite codes
-      const { data, error } = await supabase
+      const { data: members, error: membersError } = await supabase
         .from('team_members')
-        .select(`
-          *,
-          profiles(email, name)
-        `)
+        .select('*')
         .eq('admin_id', user.id)
 
-      if (error) throw error
-      setTeamMembers(data || [])
+      if (membersError) throw membersError
+
+      // Get profiles for each member separately
+      if (members && members.length > 0) {
+        const userIds = members.map(member => member.user_id)
+        const { data: profiles, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id, email, name')
+          .in('id', userIds)
+
+        if (profilesError) {
+          console.warn('Could not load profiles:', profilesError)
+          // Continue without profiles data
+          setTeamMembers(members.map(member => ({ ...member, profiles: null })))
+        } else {
+          // Merge profiles data with members
+          const membersWithProfiles = members.map(member => {
+            const profile = profiles.find(p => p.id === member.user_id)
+            return { ...member, profiles: profile || null }
+          })
+          setTeamMembers(membersWithProfiles)
+        }
+      } else {
+        setTeamMembers([])
+      }
     } catch (error) {
       console.error('Error loading team members:', error)
+      setTeamMembers([])
     } finally {
       setLoadingMembers(false)
     }
   }
 
-  const removeMember = async (memberId: string) => {
+  const removeMember = async (memberId: string, memberUserId: string) => {
+    // Prevent admin from removing themselves
+    if (memberUserId === user?.id) {
+      alert('You cannot remove yourself from the team.')
+      return
+    }
+
     if (!confirm('Are you sure you want to remove this team member?')) {
       return
     }
@@ -195,11 +245,16 @@ export const Teams: React.FC = () => {
         .from('team_invites')
         .select('*')
         .eq('code', joinCode)
-        .gt('expires_at', new Date().toISOString())
         .single()
 
       if (inviteError || !inviteData) {
-        alert('Invalid or expired team code.')
+        alert('Invalid team code.')
+        return
+      }
+
+      // Check if the invite is expired
+      if (new Date(inviteData.expires_at) <= new Date()) {
+        alert('This team code has expired.')
         return
       }
 
@@ -236,61 +291,61 @@ export const Teams: React.FC = () => {
     }
   }
 
-  const isLinkDisabled = currentInvite && new Date(currentInvite.expires_at) > new Date()
+  const isLinkActive = currentInvite && new Date(currentInvite.expires_at) > new Date()
+  const isLinkDisabled = isLinkActive
 
   return (
-    <div className="flex-1 p-8">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Teams</h1>
-          <p className="text-gray-600">Manage team invitations and join existing teams.</p>
-        </div>
+    <div className="space-y-3 sm:space-y-4">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Teams</h1>
+        <p className="text-sm text-gray-600">Manage team invitations and join existing teams</p>
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Create Invite Link */}
-          <div className="p-6 border border-gray-200 bg-white rounded-lg">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Create Team Invite Code */}
+        <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 sm:p-6">
             <div className="flex items-center mb-4">
               <div className="p-2 bg-blue-50 rounded-lg mr-3">
-                <Link className="w-5 h-5 text-blue-600" />
+                <Users className="w-5 h-5 text-blue-600" />
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-gray-900">
-                  Create Invite Link
+                  Create Team Invite Code
                 </h2>
                 <p className="text-sm text-gray-600">
-                  Generate a link to invite team members
+                  Generate a code to invite team members
                 </p>
               </div>
             </div>
 
             <div className="space-y-4">
               <button 
-                onClick={generateInviteLink} 
+                onClick={generateTeamInviteCode} 
                 disabled={isLinkDisabled || loading}
-                className={`w-full px-4 py-3 rounded-lg font-medium transition-colors duration-200 flex items-center justify-center ${
+                className={`w-full px-4 py-2 sm:py-3 rounded-md font-medium transition-colors duration-200 flex items-center justify-center touch-manipulation ${
                   isLinkDisabled 
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
                 <Mail className="w-4 h-4 mr-2" />
-                {loading ? 'Generating...' : isLinkDisabled ? 'Link is active for 15 days' : 'Generate Invite Link'}
+                {loading ? 'Generating...' : isLinkDisabled ? 'Code is active for 15 days' : 'Create Team Invite Code'}
               </button>
 
-              {inviteLink && (
+              {inviteCode && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-700 block">
-                    Invite Link
+                    Active Team Invite Code
                   </label>
                   <div className="flex space-x-2">
                     <input
-                      value={inviteLink}
+                      value={inviteCode}
                       readOnly
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-center font-mono text-lg tracking-widest"
                     />
                     <button
-                      onClick={() => copyToClipboard(inviteLink)}
+                      onClick={() => copyToClipboard(inviteCode)}
                       className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200"
                     >
                       {copied ? (
@@ -301,15 +356,15 @@ export const Teams: React.FC = () => {
                     </button>
                   </div>
                   <p className="text-xs text-gray-600">
-                    Share this link with team members to invite them to join your team.
+                    Share this 6-digit code with team members to invite them to join your team.
                   </p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Join Team */}
-          <div className="p-6 border border-gray-200 bg-white rounded-lg">
+        {/* Join Team */}
+        <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 sm:p-6">
             <div className="flex items-center mb-4">
               <div className="p-2 bg-green-50 rounded-lg mr-3">
                 <UserPlus className="w-5 h-5 text-green-600" />
@@ -344,7 +399,7 @@ export const Teams: React.FC = () => {
               <button 
                 onClick={joinTeam}
                 disabled={joinCode.length !== 6}
-                className={`w-full px-4 py-3 rounded-lg font-medium transition-colors duration-200 flex items-center justify-center ${
+                className={`w-full px-4 py-2 sm:py-3 rounded-md font-medium transition-colors duration-200 flex items-center justify-center touch-manipulation ${
                   joinCode.length === 6
                     ? 'bg-green-600 text-white hover:bg-green-700'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -353,82 +408,14 @@ export const Teams: React.FC = () => {
                 <Users className="w-4 h-4 mr-2" />
                 Join Team
               </button>
-            </div>
           </div>
         </div>
+      </div>
 
-        {/* Active Team Invite - Only visible to link generator */}
-        {currentInvite && (
-          <div className="mt-8 border border-green-200 bg-green-50 rounded-lg">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  Active Team Invite
-                </h2>
-                <div className="flex items-center text-sm text-green-600">
-                  <Link className="w-4 h-4 mr-1" />
-                  Active
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-1">
-                    Invite Code
-                  </label>
-                  <div className="flex space-x-2">
-                    <input
-                      value={currentInvite.code}
-                      readOnly
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 font-mono text-center text-lg tracking-widest"
-                    />
-                    <button
-                      onClick={() => copyToClipboard(currentInvite.code)}
-                      className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200"
-                    >
-                      {copied ? (
-                        <Check className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-1">
-                    Invite Link
-                  </label>
-                  <div className="flex space-x-2">
-                    <input
-                      value={`https://magicteams.app/join/${currentInvite.code}`}
-                      readOnly
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
-                    />
-                    <button
-                      onClick={() => copyToClipboard(`https://magicteams.app/join/${currentInvite.code}`)}
-                      className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200"
-                    >
-                      {copied ? (
-                        <Check className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                
-                <p className="text-xs text-gray-600">
-                  Share this code or link with team members. Expires on {new Date(currentInvite.expires_at).toLocaleDateString()}.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Current Teams */}
-        <div className="mt-8 border border-gray-200 bg-white rounded-lg">
-          <div className="p-6">
+      {/* Current Teams */}
+      <div className="bg-white rounded-md shadow-sm border border-gray-200">
+        <div className="p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-900">
                 Your Team Members
@@ -453,52 +440,46 @@ export const Teams: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {/* Admin (you) */}
-                <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-center">
-                    <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                      <span className="text-white text-sm font-semibold">
-                        {user?.email?.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {user?.email} <span className="text-sm text-blue-600">(You - Admin)</span>
-                      </p>
-                      <p className="text-sm text-gray-600">Team administrator</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Team Members */}
-                {teamMembers.map((member) => (
-                  <div key={member.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center mr-3">
-                        <span className="text-gray-600 text-sm font-semibold">
-                          {member.profiles?.email?.charAt(0).toUpperCase() || 'U'}
-                        </span>
+                {/* All Team Members (including admin) */}
+                {teamMembers.map((member) => {
+                  const isAdmin = member.user_id === user?.id;
+                  return (
+                    <div key={member.id} className={`flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 rounded-md gap-2 ${
+                      isAdmin ? 'bg-blue-50 border border-blue-200' : 'border border-gray-200 hover:bg-gray-50'
+                    }`}>
+                      <div className="flex items-center">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
+                          isAdmin ? 'bg-blue-500' : 'bg-gray-300'
+                        }`}>
+                          <span className={`text-sm font-semibold ${
+                            isAdmin ? 'text-white' : 'text-gray-600'
+                          }`}>
+                            {member.profiles?.email?.charAt(0).toUpperCase() || 'U'}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {member.profiles?.email || 'Unknown User'}
+                            {isAdmin && <span className="text-sm text-blue-600 ml-2">(You - Admin)</span>}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {isAdmin ? 'Team administrator' : `Joined ${new Date(member.joined_at).toLocaleDateString()}`}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-gray-900">
-                          {member.profiles?.email || 'Unknown User'}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Joined {new Date(member.joined_at).toLocaleDateString()}
-                        </p>
-                      </div>
+                      {!isAdmin && (
+                        <button
+                          onClick={() => removeMember(member.id, member.user_id)}
+                          className="px-3 py-1 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors duration-200"
+                        >
+                          Remove
+                        </button>
+                      )}
                     </div>
-                    <button
-                      onClick={() => removeMember(member.id)}
-                      className="px-3 py-1 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors duration-200"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
-          </div>
         </div>
       </div>
     </div>

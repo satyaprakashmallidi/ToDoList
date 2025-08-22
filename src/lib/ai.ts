@@ -3,6 +3,48 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // Initialize the AI model with the API key
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
 
+export async function determineOptimalSteps(mainTask: string): Promise<number> {
+  try {
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash-8b",
+      generationConfig: {
+        temperature: 0.3,
+        topK: 20,
+        topP: 0.8,
+        maxOutputTokens: 100,
+      }
+    });
+
+    const result = await model.generateContent(
+      `Task: "${mainTask}"
+      
+Analyze this task and determine the optimal number of steps (between 1-10) needed to complete it effectively.
+Consider:
+- Task complexity
+- Logical breakdown requirements
+- Practical implementation steps
+
+Return ONLY a single number between 1 and 10, nothing else.`
+    );
+    
+    const response = result.response;
+    const text = response.text().trim();
+    const steps = parseInt(text);
+    
+    // Validate the response
+    if (isNaN(steps) || steps < 1 || steps > 10) {
+      // Default fallback
+      return 3;
+    }
+    
+    return steps;
+  } catch (error) {
+    console.error('Error determining optimal steps:', error);
+    // Return default value on error
+    return 3;
+  }
+}
+
 export async function generateSubtasks(mainTask: string, numSubtasks: number): Promise<string[]> {
   try {
     // Get the generative model

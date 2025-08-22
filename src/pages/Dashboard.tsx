@@ -17,7 +17,7 @@ export const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeInvite, setActiveInvite] = useState<InviteLink | null>(null)
-  const { supabase: useSupabaseHook } = useSupabase()
+  const { supabase: supabaseHook } = useSupabase()
   const { user } = useAuth()
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export const Dashboard: React.FC = () => {
         setLoading(true)
         setError(null)
 
-        const { data, error } = await useSupabaseHook
+        const { data, error } = await supabaseHook
           .from('tasks')
           .select('*')
           .eq('user_id', user.id)
@@ -60,7 +60,7 @@ export const Dashboard: React.FC = () => {
     }
 
     fetchTaskStats()
-  }, [user?.id, useSupabaseHook])
+  }, [user?.id, supabaseHook])
 
   const totalTasks = tasks.length
   const openTasks = tasks.filter(task => task.status === 'open').length

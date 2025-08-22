@@ -247,14 +247,23 @@ export const Tasks: React.FC = () => {
           </button>
         </div>
       ) : (
-        <div className="space-y-3 sm:space-y-4">
-          {/* Ongoing Tasks */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="p-3 sm:p-4">
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-2 sm:mb-3">Ongoing Tasks</h2>
-              <div className="space-y-2 sm:space-y-3">
+        <div className="space-y-4">
+          {/* Mobile layout - stacked columns */}
+          <div className="block lg:hidden space-y-4">
+            {/* High Priority */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                  <h2 className="text-lg font-semibold text-gray-900">High Priority</h2>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    {tasks.filter(task => task.priority === 'high' && task.status !== 'completed').length}
+                  </span>
+                </div>
+              </div>
+              <div className="p-4 space-y-3">
                 {tasks
-                  .filter(task => task.status === 'open')
+                  .filter(task => task.priority === 'high' && task.status !== 'completed')
                   .map((task) => (
                     <TaskItem 
                       key={task.id} 
@@ -263,18 +272,80 @@ export const Tasks: React.FC = () => {
                       onDelete={() => handleDeleteTask(task.id, task.title)}
                     />
                   ))}
+                {tasks.filter(task => task.priority === 'high' && task.status !== 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No high priority tasks</p>
+                )}
               </div>
-              {tasks.filter(task => task.status === 'open').length === 0 && (
-                <p className="text-gray-500 text-center py-3 sm:py-4 text-sm">No ongoing tasks</p>
-              )}
             </div>
-          </div>
 
-          {/* Completed Tasks */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="p-3 sm:p-4">
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-2 sm:mb-3">Completed Tasks</h2>
-              <div className="space-y-2 sm:space-y-3">
+            {/* Medium Priority */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                  <h2 className="text-lg font-semibold text-gray-900">Medium Priority</h2>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    {tasks.filter(task => (task.priority === 'medium' || !task.priority) && task.status !== 'completed').length}
+                  </span>
+                </div>
+              </div>
+              <div className="p-4 space-y-3">
+                {tasks
+                  .filter(task => (task.priority === 'medium' || !task.priority) && task.status !== 'completed')
+                  .map((task) => (
+                    <TaskItem 
+                      key={task.id} 
+                      task={task} 
+                      onUpdate={fetchTasks}
+                      onDelete={() => handleDeleteTask(task.id, task.title)}
+                    />
+                  ))}
+                {tasks.filter(task => (task.priority === 'medium' || !task.priority) && task.status !== 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No medium priority tasks</p>
+                )}
+              </div>
+            </div>
+
+            {/* Low Priority */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <h2 className="text-lg font-semibold text-gray-900">Low Priority</h2>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    {tasks.filter(task => task.priority === 'low' && task.status !== 'completed').length}
+                  </span>
+                </div>
+              </div>
+              <div className="p-4 space-y-3">
+                {tasks
+                  .filter(task => task.priority === 'low' && task.status !== 'completed')
+                  .map((task) => (
+                    <TaskItem 
+                      key={task.id} 
+                      task={task} 
+                      onUpdate={fetchTasks}
+                      onDelete={() => handleDeleteTask(task.id, task.title)}
+                    />
+                  ))}
+                {tasks.filter(task => task.priority === 'low' && task.status !== 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No low priority tasks</p>
+                )}
+              </div>
+            </div>
+
+            {/* Completed */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
+                  <h2 className="text-lg font-semibold text-gray-900">Completed</h2>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    {tasks.filter(task => task.status === 'completed').length}
+                  </span>
+                </div>
+              </div>
+              <div className="p-4 space-y-3">
                 {tasks
                   .filter(task => task.status === 'completed')
                   .map((task) => (
@@ -285,10 +356,125 @@ export const Tasks: React.FC = () => {
                       onDelete={() => handleDeleteTask(task.id, task.title)}
                     />
                   ))}
+                {tasks.filter(task => task.status === 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No completed tasks</p>
+                )}
               </div>
-              {tasks.filter(task => task.status === 'completed').length === 0 && (
-                <p className="text-gray-500 text-center py-3 sm:py-4 text-sm">No completed tasks</p>
-              )}
+            </div>
+          </div>
+
+          {/* Desktop layout - 4 columns */}
+          <div className="hidden lg:grid lg:grid-cols-4 lg:gap-6">
+            {/* High Priority Column */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-fit">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                  <h2 className="font-semibold text-gray-900">High Priority</h2>
+                </div>
+                <span className="text-xs text-gray-500 mt-1 block">
+                  {tasks.filter(task => task.priority === 'high' && task.status !== 'completed').length} tasks
+                </span>
+              </div>
+              <div className="p-3 space-y-3 min-h-[200px]">
+                {tasks
+                  .filter(task => task.priority === 'high' && task.status !== 'completed')
+                  .map((task) => (
+                    <TaskItem 
+                      key={task.id} 
+                      task={task} 
+                      onUpdate={fetchTasks}
+                      onDelete={() => handleDeleteTask(task.id, task.title)}
+                    />
+                  ))}
+                {tasks.filter(task => task.priority === 'high' && task.status !== 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No high priority tasks</p>
+                )}
+              </div>
+            </div>
+
+            {/* Medium Priority Column */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-fit">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                  <h2 className="font-semibold text-gray-900">Medium Priority</h2>
+                </div>
+                <span className="text-xs text-gray-500 mt-1 block">
+                  {tasks.filter(task => (task.priority === 'medium' || !task.priority) && task.status !== 'completed').length} tasks
+                </span>
+              </div>
+              <div className="p-3 space-y-3 min-h-[200px]">
+                {tasks
+                  .filter(task => (task.priority === 'medium' || !task.priority) && task.status !== 'completed')
+                  .map((task) => (
+                    <TaskItem 
+                      key={task.id} 
+                      task={task} 
+                      onUpdate={fetchTasks}
+                      onDelete={() => handleDeleteTask(task.id, task.title)}
+                    />
+                  ))}
+                {tasks.filter(task => (task.priority === 'medium' || !task.priority) && task.status !== 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No medium priority tasks</p>
+                )}
+              </div>
+            </div>
+
+            {/* Low Priority Column */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-fit">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <h2 className="font-semibold text-gray-900">Low Priority</h2>
+                </div>
+                <span className="text-xs text-gray-500 mt-1 block">
+                  {tasks.filter(task => task.priority === 'low' && task.status !== 'completed').length} tasks
+                </span>
+              </div>
+              <div className="p-3 space-y-3 min-h-[200px]">
+                {tasks
+                  .filter(task => task.priority === 'low' && task.status !== 'completed')
+                  .map((task) => (
+                    <TaskItem 
+                      key={task.id} 
+                      task={task} 
+                      onUpdate={fetchTasks}
+                      onDelete={() => handleDeleteTask(task.id, task.title)}
+                    />
+                  ))}
+                {tasks.filter(task => task.priority === 'low' && task.status !== 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No low priority tasks</p>
+                )}
+              </div>
+            </div>
+
+            {/* Completed Column */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-fit">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
+                  <h2 className="font-semibold text-gray-900">Completed</h2>
+                </div>
+                <span className="text-xs text-gray-500 mt-1 block">
+                  {tasks.filter(task => task.status === 'completed').length} tasks
+                </span>
+              </div>
+              <div className="p-3 space-y-3 min-h-[200px]">
+                {tasks
+                  .filter(task => task.status === 'completed')
+                  .map((task) => (
+                    <TaskItem 
+                      key={task.id} 
+                      task={task} 
+                      onUpdate={fetchTasks}
+                      onDelete={() => handleDeleteTask(task.id, task.title)}
+                    />
+                  ))}
+                {tasks.filter(task => task.status === 'completed').length === 0 && (
+                  <p className="text-gray-400 text-center py-8 text-sm">No completed tasks</p>
+                )}
+              </div>
             </div>
           </div>
         </div>

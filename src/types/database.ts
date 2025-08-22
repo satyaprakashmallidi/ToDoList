@@ -5,24 +5,30 @@ export interface Database {
         Row: {
           id: string
           email: string
+          full_name: string | null
           name: string | null
           role: 'user' | 'admin' | null
+          avatar_url: string | null
           created_at: string | null
           updated_at: string | null
         }
         Insert: {
           id: string
           email: string
+          full_name?: string | null
           name?: string | null
           role?: 'user' | 'admin' | null
+          avatar_url?: string | null
           created_at?: string | null
           updated_at?: string | null
         }
         Update: {
           id?: string
           email?: string
+          full_name?: string | null
           name?: string | null
           role?: 'user' | 'admin' | null
+          avatar_url?: string | null
           created_at?: string | null
           updated_at?: string | null
         }
@@ -191,6 +197,55 @@ export interface Database {
           duration_seconds?: number | null
           notes?: string | null
           created_at?: string | null
+        }
+      }
+      team_invites: {
+        Row: {
+          id: string
+          code: string
+          created_by: string
+          expires_at: string
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          code: string
+          created_by: string
+          expires_at: string
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          code?: string
+          created_by?: string
+          expires_at?: string
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
+      team_members: {
+        Row: {
+          id: string
+          user_id: string
+          team_invite_id: string
+          admin_id: string
+          joined_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          team_invite_id: string
+          admin_id: string
+          joined_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          team_invite_id?: string
+          admin_id?: string
+          joined_at?: string | null
         }
       }
     }

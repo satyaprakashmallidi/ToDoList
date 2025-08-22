@@ -1,5 +1,6 @@
 import React from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { User, Mail, Shield, LogOut, Calendar } from 'lucide-react'
 
 export const Profile: React.FC = () => {
   const { user, signOut } = useAuth()
@@ -10,68 +11,159 @@ export const Profile: React.FC = () => {
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
-      month: 'numeric',
+      month: 'long',
       day: 'numeric', 
       year: 'numeric'
     })
   }
 
   return (
-    <div className="flex justify-center">
-      <div className="w-full max-w-2xl px-5 py-5">
-        <h1 className="text-3xl font-normal mb-2">Profile Settings</h1>
-        <p className="text-gray-600 mb-6">Manage your account information and preferences</p>
+    <div className="space-y-3 sm:space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Profile Settings</h1>
+        <p className="text-sm text-gray-600">Manage your account information and preferences</p>
+      </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Personal Information */}
-        <div className="border border-gray-200 rounded-lg p-5 mb-5 bg-white">
-          <h2 className="text-xl font-normal mb-4">👤 Personal Information</h2>
-          <p className="text-gray-600 mb-4">Update your personal details and contact information</p>
-          <div className="flex gap-2 mb-4">
-            <input 
-              type="text" 
-              placeholder="Your first name"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-gray-400"
-            />
-            <input 
-              type="text" 
-              placeholder="Your last name"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-gray-400"
-            />
+        <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 sm:p-6">
+          <div className="flex items-center mb-4">
+            <div className="p-2 bg-blue-50 rounded-lg mr-3">
+              <User className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Personal Information</h2>
+              <p className="text-sm text-gray-600">Update your personal details</p>
+            </div>
           </div>
-          <button 
-            className="px-5 py-2 bg-gray-900 text-white rounded hover:bg-gray-800 transition-colors duration-200"
-          >
-            Update Profile
-          </button>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                <input 
+                  type="text" 
+                  placeholder="Enter first name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                <input 
+                  type="text" 
+                  placeholder="Enter last name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+            <button 
+              className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
+            >
+              Update Profile
+            </button>
+          </div>
         </div>
 
         {/* Account Information */}
-        <div className="border border-gray-200 rounded-lg p-5 mb-5 bg-white">
-          <h2 className="text-xl font-normal mb-4">✉️ Account Information</h2>
-          <p className="text-gray-600 mb-4">View your account details and status</p>
-          <div className="space-y-2">
-            <div>
-              <span className="font-semibold">Email Address:</span> {user?.email || 'user@example.com'}
+        <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 sm:p-6">
+          <div className="flex items-center mb-4">
+            <div className="p-2 bg-green-50 rounded-lg mr-3">
+              <Mail className="w-5 h-5 text-green-600" />
             </div>
             <div>
-              <span className="font-semibold">User ID:</span> {user?.id || 'N/A'}
+              <h2 className="text-lg font-semibold text-gray-900">Account Information</h2>
+              <p className="text-sm text-gray-600">View your account details</p>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-1">Email Address</p>
+              <div className="flex items-center">
+                <Mail className="w-4 h-4 mr-2 text-gray-400" />
+                <p className="text-sm text-gray-900">{user?.email || 'user@example.com'}</p>
+              </div>
             </div>
             <div>
-              <span className="font-semibold">Member Since:</span> {user?.created_at ? formatDate(new Date(user.created_at)) : formatDate(new Date())}
+              <p className="text-sm font-medium text-gray-700 mb-1">Member Since</p>
+              <div className="flex items-center">
+                <Calendar className="w-4 h-4 mr-2 text-gray-400" />
+                <p className="text-sm text-gray-900">
+                  {user?.created_at ? formatDate(new Date(user.created_at)) : formatDate(new Date())}
+                </p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-gray-100">
+              <p className="text-xs text-gray-500">
+                Your account is secured with email authentication
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Security & Privacy */}
+        <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 sm:p-6">
+          <div className="flex items-center mb-4">
+            <div className="p-2 bg-purple-50 rounded-lg mr-3">
+              <Shield className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Security & Privacy</h2>
+              <p className="text-sm text-gray-600">Manage your account security</p>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <button className="w-full text-left px-4 py-3 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors duration-200 group">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Change Password</p>
+                  <p className="text-xs text-gray-600 mt-1">Update your account password</p>
+                </div>
+                <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </button>
+            
+            <div className="px-4 py-3 bg-gray-50 rounded-md">
+              <div className="flex items-start">
+                <svg className="w-4 h-4 text-green-500 mt-0.5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Account Protected</p>
+                  <p className="text-xs text-gray-600 mt-1">Your account uses secure email authentication</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Account Actions */}
-        <div className="border border-gray-200 rounded-lg p-5 bg-white">
-          <h2 className="text-xl font-normal mb-4">⚠️ Account Actions</h2>
-          <p className="text-gray-600 mb-4">Actions that affect your account</p>
-          <button 
-            onClick={handleSignOut}
-            className="px-5 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors duration-200"
-          >
-            Sign Out
-          </button>
+        <div className="bg-white rounded-md shadow-sm border border-gray-200 p-4 sm:p-6">
+          <div className="flex items-center mb-4">
+            <div className="p-2 bg-red-50 rounded-lg mr-3">
+              <LogOut className="w-5 h-5 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Account Actions</h2>
+              <p className="text-sm text-gray-600">Manage your account status</p>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            <button 
+              onClick={handleSignOut}
+              className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200 flex items-center justify-center"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Sign Out
+            </button>
+            <p className="text-xs text-gray-500">
+              This will sign you out of your account on this device
+            </p>
+          </div>
         </div>
       </div>
     </div>

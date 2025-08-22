@@ -13,7 +13,9 @@ import { Tasks } from './pages/Tasks'
 import { Calendar } from './pages/Calendar'
 import { AddTasks } from './pages/AddTasks'
 import { Teams } from './pages/Teams'
+import { Chats } from './pages/Chats'
 import { Profile } from './pages/Profile'
+import { DebugSupabase } from './pages/DebugSupabase'
 
 const AppLayout: React.FC = () => {
   // Default to true on tablet and desktop, false on mobile
@@ -89,12 +91,14 @@ const AppLayout: React.FC = () => {
 
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 overflow-y-auto">
-          <div className={`animate-in fade-in duration-300 py-4 sm:py-6 ${
+          <div className={`animate-in fade-in duration-300 h-full py-4 sm:py-6 ${
             !sidebarOpen 
               ? 'pl-16 pr-3 sm:pl-8 sm:pr-6 lg:pr-8' // Extra left padding on xs for button, normal on sm+ for collapsed sidebar
               : 'px-3 sm:px-6 lg:px-8'
           }`}>
-            <Outlet />
+            <div className="h-full flex flex-col">
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>
@@ -152,9 +156,11 @@ function App() {
               <Route path="new-task" element={<AddTasks />} />
               <Route path="tasks" element={<Tasks />} />
               <Route path="teams" element={<Teams />} />
+              <Route path="chats" element={<Chats />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="calendar" element={<Calendar />} />
               <Route path="profile" element={<Profile />} />
+              <Route path="debug" element={<DebugSupabase />} />
             </Route>
             
             <Route path="/" element={
