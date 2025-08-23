@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSupabase } from './useSupabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { ChatConversation, ChatMessage, ChatUser, ChatGroup, GroupMember } from '../types/chat';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export function useChat() {
   const { supabase } = useSupabase();
@@ -12,6 +13,9 @@ export function useChat() {
   const [teamMembers, setTeamMembers] = useState<ChatUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Store active subscriptions
+  const subscriptionsRef = useRef<Map<string, RealtimeChannel>>(new Map());
 
   // Load user's conversations (both direct and group)
   const loadConversations = useCallback(async () => {
@@ -59,12 +63,136 @@ export function useChat() {
     }
   }, [user, supabase]);
 
+  // Subscribe to real-time messages for a group
+  const subscribeToMessages = useCallback((conversationId: string) => {
+    if (!user || !supabase) return;
+
+    // Unsubscribe from existing subscription if any
+    const existingChannel = subscriptionsRef.current.get(conversationId);
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+      subscriptionsRef.current.delete(conversationId);
+    }
+
+    // Create new subscription
+    const channel = supabase
+      .channel(`group-messages:${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'group_messages',
+          filter: `group_id=eq.${conversationId}`
+        },
+        async (payload) => {
+          // New message received
+          const newMessage = payload.new as any;
+          
+          // Skip if this is our own message (already added optimistically)
+          if (newMessage.sender_id === user.id) return;
+          
+          // Fetch sender info
+          const { data: senderProfile } = await supabase
+            .from('profiles')
+            .select('id, full_name, first_name, email, avatar_url')
+            .eq('id', newMessage.sender_id)
+            .single();
+
+          const formattedMessage: ChatMessage = {
+            id: newMessage.id,
+            content: newMessage.content,
+            sender_id: newMessage.sender_id,
+            sender_name: senderProfile?.full_name || senderProfile?.email || 'Unknown',
+            sender_first_name: senderProfile?.first_name,
+            sender_avatar: senderProfile?.avatar_url,
+            created_at: newMessage.created_at,
+            updated_at: newMessage.updated_at,
+            is_edited: newMessage.is_edited,
+            is_deleted: newMessage.is_deleted,
+            message_type: newMessage.message_type
+          };
+
+          // Add message to state
+          setMessages(prev => ({
+            ...prev,
+            [conversationId]: [...(prev[conversationId] || []), formattedMessage]
+          }));
+
+          // Update conversation's last message
+          setConversations(prev => prev.map(conv => 
+            conv.id === conversationId 
+              ? {
+                  ...conv,
+                  last_message: newMessage.content,
+                  last_message_time: newMessage.created_at,
+                  updated_at: newMessage.created_at
+                }
+              : conv
+          ));
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'group_messages',
+          filter: `group_id=eq.${conversationId}`
+        },
+        async (payload) => {
+          // Message was edited
+          const updatedMessage = payload.new as any;
+          
+          // Update message in state
+          setMessages(prev => ({
+            ...prev,
+            [conversationId]: (prev[conversationId] || []).map(msg =>
+              msg.id === updatedMessage.id
+                ? {
+                    ...msg,
+                    content: updatedMessage.content,
+                    is_edited: updatedMessage.is_edited,
+                    updated_at: updatedMessage.updated_at
+                  }
+                : msg
+            )
+          }));
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'group_messages',
+          filter: `group_id=eq.${conversationId}`
+        },
+        (payload) => {
+          // Message was deleted
+          const deletedMessage = payload.old as any;
+          
+          // Remove message from state
+          setMessages(prev => ({
+            ...prev,
+            [conversationId]: (prev[conversationId] || []).filter(msg => msg.id !== deletedMessage.id)
+          }));
+        }
+      )
+      .subscribe();
+
+    // Store the subscription
+    subscriptionsRef.current.set(conversationId, channel);
+  }, [user, supabase]);
+
   // Load messages for a specific conversation
   const loadMessages = useCallback(async (conversationId: string, type: 'direct' | 'group') => {
     if (!user) return;
 
     try {
       if (type === 'group') {
+        // Subscribe to real-time updates
+        subscribeToMessages(conversationId);
         // Try loading group messages using the new RPC function
         const { data: groupMessages, error } = await supabase
           .rpc('get_group_messages_with_profiles', {
@@ -93,7 +221,7 @@ export function useChat() {
           if (senderIds.length > 0) {
             const { data: profiles } = await supabase
               .from('profiles')
-              .select('id, full_name, email, avatar_url')
+              .select('id, full_name, first_name, email, avatar_url')
               .in('id', senderIds);
 
             const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
@@ -105,6 +233,7 @@ export function useChat() {
                 content: msg.content,
                 sender_id: msg.sender_id,
                 sender_name: profile?.full_name || profile?.email || 'Unknown',
+                sender_first_name: profile?.first_name,
                 sender_avatar: profile?.avatar_url,
                 created_at: msg.created_at,
                 updated_at: msg.updated_at,
@@ -133,6 +262,7 @@ export function useChat() {
           content: msg.content,
           sender_id: msg.sender_id,
           sender_name: msg.sender_full_name || msg.sender_email || 'Unknown',
+          sender_first_name: msg.sender_first_name,
           sender_avatar: msg.sender_avatar_url,
           created_at: msg.created_at,
           updated_at: msg.updated_at,
@@ -152,7 +282,7 @@ export function useChat() {
       console.error('Failed to load messages:', err);
       setError(err instanceof Error ? err.message : 'Failed to load messages');
     }
-  }, [user, supabase]);
+  }, [user, supabase, subscribeToMessages]);
 
   // Send a message
   const sendMessage = useCallback(async (conversationId: string, content: string, type: 'direct' | 'group') => {
@@ -192,6 +322,7 @@ export function useChat() {
           content: data.content,
           sender_id: data.sender_id,
           sender_name: user.user_metadata?.full_name || user.email || 'You',
+          sender_first_name: user.user_metadata?.first_name,
           sender_avatar: user.user_metadata?.avatar_url,
           created_at: data.created_at,
           updated_at: data.updated_at,
@@ -305,6 +436,69 @@ export function useChat() {
     }
   }, [user, supabase]);
 
+  // Cleanup function for subscriptions
+  const cleanupSubscriptions = useCallback(() => {
+    subscriptionsRef.current.forEach((channel) => {
+      supabase.removeChannel(channel);
+    });
+    subscriptionsRef.current.clear();
+  }, [supabase]);
+
+  // Subscribe to conversation updates (new groups, members added/removed)
+  useEffect(() => {
+    if (!user || !supabase) return;
+
+    // Subscribe to group member changes for the current user
+    const groupMemberChannel = supabase
+      .channel('group-members-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_group_members',
+          filter: `user_id=eq.${user.id}`
+        },
+        () => {
+          // Reload conversations when user is added/removed from groups
+          loadConversations();
+        }
+      )
+      .subscribe();
+
+    // Subscribe to group updates (name changes, etc.)
+    const groupChannel = supabase
+      .channel('groups-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'chat_groups'
+        },
+        (payload) => {
+          const updatedGroup = payload.new as any;
+          
+          // Update group info in conversations
+          setConversations(prev => prev.map(conv =>
+            conv.id === updatedGroup.id
+              ? {
+                  ...conv,
+                  name: updatedGroup.name,
+                  updated_at: updatedGroup.updated_at
+                }
+              : conv
+          ));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(groupMemberChannel);
+      supabase.removeChannel(groupChannel);
+    };
+  }, [user, supabase, loadConversations]);
+
   // Initial load
   useEffect(() => {
     if (user) {
@@ -312,6 +506,13 @@ export function useChat() {
       loadTeamMembers();
     }
   }, [user, loadConversations, loadTeamMembers]);
+
+  // Cleanup subscriptions on unmount
+  useEffect(() => {
+    return () => {
+      cleanupSubscriptions();
+    };
+  }, [cleanupSubscriptions]);
 
   return {
     conversations,
@@ -324,6 +525,7 @@ export function useChat() {
     sendMessage,
     createGroup,
     deleteGroup,
-    clearError: () => setError(null)
+    clearError: () => setError(null),
+    cleanupSubscriptions
   };
 }

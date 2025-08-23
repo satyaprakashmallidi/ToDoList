@@ -380,7 +380,7 @@ export const Teams: React.FC = () => {
   const isLinkDisabled = false // Always allow generating new codes
 
   return (
-    <div className="space-y-3 sm:space-y-4">
+    <div className="space-y-3 sm:space-y-4 bg-white min-h-full">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Teams</h1>

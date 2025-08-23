@@ -82,14 +82,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
           }}>
             <div className="flex-1 flex flex-col min-h-0">
               {/* Header */}
-              <div className="px-5 py-5 border-b border-gray-200/50 flex-shrink-0">
+              <div className="px-5 py-6 border-b border-gray-200/50 flex-shrink-0">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-5 h-5 text-purple-500" />
-                      <h2 className="text-lg font-semibold text-gray-900">Magic Teams</h2>
+                      <Sparkles className="w-6 h-6 text-purple-500" />
+                      <h2 className="text-xl font-semibold text-gray-900">Magic Teams</h2>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 ml-7">Task Management</p>
+                 
                   </div>
                   {/* Close button */}
                   <button

@@ -28,8 +28,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   };
 
   return (
-    <div className="p-3 md:p-4 bg-white border-t border-gray-200">
-      <form onSubmit={handleSubmit} className="flex items-end gap-2 md:gap-3">
+    <div className="flex-shrink-0 bg-white border-t border-gray-200 p-3 sm:p-4">
+      <form onSubmit={handleSubmit} className="flex items-end gap-2 sm:gap-3">
         <div className="flex-1">
           <textarea
             value={message}
@@ -38,14 +38,15 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             placeholder="Type a message..."
             disabled={disabled}
             rows={1}
-            className="w-full px-3 py-2 md:px-4 md:py-2 text-sm md:text-base border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-4 py-3 text-sm bg-gray-100 border-0 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
             style={{
-              minHeight: '40px',
+              minHeight: '44px',
               maxHeight: '120px',
+              lineHeight: '1.5',
             }}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
-              target.style.height = '40px';
+              target.style.height = '44px';
               target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
             }}
           />
@@ -53,9 +54,13 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         <button
           type="submit"
           disabled={!message.trim() || disabled}
-          className="p-2 md:p-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+          className={`w-10 sm:w-11 h-10 sm:h-11 rounded-full transition-all duration-200 flex items-center justify-center flex-shrink-0 ${
+            message.trim() && !disabled
+              ? 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-105 shadow-lg'
+              : 'bg-gray-200 text-gray-400'
+          }`}
         >
-          <Send className="w-4 h-4 md:w-5 md:h-5" />
+          <Send className="w-4 sm:w-5 h-4 sm:h-5" />
         </button>
       </form>
     </div>

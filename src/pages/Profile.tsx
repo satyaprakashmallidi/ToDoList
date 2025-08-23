@@ -1,9 +1,73 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { User, Mail, Shield, LogOut, Calendar } from 'lucide-react'
+import { useSupabase } from '../hooks/useSupabase'
+import { User, Mail, Shield, LogOut, Calendar, CheckCircle } from 'lucide-react'
 
 export const Profile: React.FC = () => {
   const { user, signOut } = useAuth()
+  const { supabase } = useSupabase()
+  
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  // Load current profile data
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!user) return
+      
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('first_name, last_name')
+          .eq('id', user.id)
+          .single()
+        
+        if (profile) {
+          setFirstName(profile.first_name || '')
+          setLastName(profile.last_name || '')
+        }
+      } catch (error) {
+        console.error('Error loading profile:', error)
+      }
+    }
+    
+    loadProfile()
+  }, [user, supabase])
+
+  const handleUpdateProfile = async () => {
+    if (!user) return
+    
+    setLoading(true)
+    setError('')
+    setMessage('')
+    
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id)
+      
+      if (error) {
+        setError('Failed to update profile')
+        console.error('Profile update error:', error)
+      } else {
+        setMessage('Profile updated successfully!')
+        setTimeout(() => setMessage(''), 3000)
+      }
+    } catch (error) {
+      setError('Failed to update profile')
+      console.error('Profile update error:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleSignOut = async () => {
     await signOut()
@@ -18,11 +82,25 @@ export const Profile: React.FC = () => {
   }
 
   return (
-    <div className="space-y-3 sm:space-y-4">
+    <div className="space-y-3 sm:space-y-4 bg-white min-h-full">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Profile Settings</h1>
         <p className="text-sm text-gray-600">Manage your account information and preferences</p>
       </div>
+
+      {/* Success/Error Messages */}
+      {message && (
+        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-md flex items-center">
+          <CheckCircle className="w-4 h-4 mr-2" />
+          {message}
+        </div>
+      )}
+      
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
+          {error}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Personal Information */}
@@ -44,6 +122,8 @@ export const Profile: React.FC = () => {
                 <input 
                   type="text" 
                   placeholder="Enter first name"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
@@ -52,14 +132,25 @@ export const Profile: React.FC = () => {
                 <input 
                   type="text" 
                   placeholder="Enter last name"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             </div>
             <button 
-              className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
+              onClick={handleUpdateProfile}
+              disabled={loading}
+              className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
             >
-              Update Profile
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
+                  Updating...
+                </>
+              ) : (
+                'Update Profile'
+              )}
             </button>
           </div>
         </div>

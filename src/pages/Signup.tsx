@@ -1,12 +1,16 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { Mail, Lock, Eye, EyeOff, ArrowLeft, CheckCircle, Shield } from 'lucide-react'
+import { Mail, Lock, Eye, EyeOff, ArrowLeft, CheckCircle, Shield, User } from 'lucide-react'
 
 export const Signup: React.FC = () => {
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [focusedField, setFocusedField] = useState<string | null>(null)
@@ -32,7 +36,33 @@ export const Signup: React.FC = () => {
     setLoading(true)
     setError('')
 
-    const { error } = await signUp(email, password)
+    // Validation
+    if (!firstName.trim()) {
+      setError('First name is required')
+      setLoading(false)
+      return
+    }
+
+    if (!lastName.trim()) {
+      setError('Last name is required')
+      setLoading(false)
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match')
+      setLoading(false)
+      return
+    }
+
+    if (passwordStrength < 2) {
+      setError('Password is too weak. Please choose a stronger password.')
+      setLoading(false)
+      return
+    }
+
+    const fullName = `${firstName.trim()} ${lastName.trim()}`
+    const { error } = await signUp(email, password, { firstName: firstName.trim(), lastName: lastName.trim(), fullName })
     
     if (error) {
       setError(error.message)
@@ -108,6 +138,69 @@ export const Signup: React.FC = () => {
               )}
 
               <form onSubmit={handleSubmit} className="space-y-6">
+                {/* First Name and Last Name Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* First Name Field */}
+                  <div className="relative">
+                    <label 
+                      htmlFor="firstName" 
+                      className={`absolute transition-all duration-200 pointer-events-none z-10 ${
+                        focusedField === 'firstName' || firstName 
+                          ? 'left-4 -top-2 text-xs bg-white px-2 rounded text-gray-700' 
+                          : 'left-12 top-4 text-gray-500'
+                      }`}
+                    >
+                      First Name
+                    </label>
+                    <div className="relative">
+                      <User className={`absolute left-4 top-4 w-5 h-5 transition-colors duration-200 ${
+                        focusedField === 'firstName' ? 'text-blue-500' : 'text-gray-400'
+                      }`} />
+                      <input
+                        id="firstName"
+                        type="text"
+                        required
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        onFocus={() => setFocusedField('firstName')}
+                        onBlur={() => setFocusedField(null)}
+                        className="w-full pl-12 pr-4 py-4 bg-white/70 border border-gray-300 rounded-md text-gray-900 placeholder-transparent focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
+                        placeholder="Enter your first name"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Last Name Field */}
+                  <div className="relative">
+                    <label 
+                      htmlFor="lastName" 
+                      className={`absolute transition-all duration-200 pointer-events-none z-10 ${
+                        focusedField === 'lastName' || lastName 
+                          ? 'left-4 -top-2 text-xs bg-white px-2 rounded text-gray-700' 
+                          : 'left-12 top-4 text-gray-500'
+                      }`}
+                    >
+                      Last Name
+                    </label>
+                    <div className="relative">
+                      <User className={`absolute left-4 top-4 w-5 h-5 transition-colors duration-200 ${
+                        focusedField === 'lastName' ? 'text-blue-500' : 'text-gray-400'
+                      }`} />
+                      <input
+                        id="lastName"
+                        type="text"
+                        required
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        onFocus={() => setFocusedField('lastName')}
+                        onBlur={() => setFocusedField(null)}
+                        className="w-full pl-12 pr-4 py-4 bg-white/70 border border-gray-300 rounded-md text-gray-900 placeholder-transparent focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
+                        placeholder="Enter your last name"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Email Field */}
                 <div className="relative">
                   <label 
@@ -195,6 +288,68 @@ export const Signup: React.FC = () => {
                           />
                         ))}
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Confirm Password Field */}
+                <div className="relative">
+                  <label 
+                    htmlFor="confirmPassword" 
+                    className={`absolute transition-all duration-200 pointer-events-none z-10 ${
+                      focusedField === 'confirmPassword' || confirmPassword 
+                        ? 'left-4 -top-2 text-xs bg-white px-2 rounded text-gray-700' 
+                        : 'left-12 top-4 text-gray-500'
+                    }`}
+                  >
+                    Confirm Password
+                  </label>
+                  <div className="relative">
+                    <Lock className={`absolute left-4 top-4 w-5 h-5 transition-colors duration-200 ${
+                      focusedField === 'confirmPassword' ? 'text-blue-500' : 'text-gray-400'
+                    }`} />
+                    <input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      onFocus={() => setFocusedField('confirmPassword')}
+                      onBlur={() => setFocusedField(null)}
+                      className={`w-full pl-12 pr-12 py-4 bg-white/70 border rounded-md text-gray-900 placeholder-transparent focus:outline-none focus:bg-white transition-all duration-200 ${
+                        confirmPassword && password !== confirmPassword
+                          ? 'border-red-300 focus:border-red-500'
+                          : confirmPassword && password === confirmPassword
+                          ? 'border-green-300 focus:border-green-500'
+                          : 'border-gray-300 focus:border-blue-500'
+                      }`}
+                      placeholder="Confirm your password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-4 top-4 text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
+
+                  {/* Password Match Indicator */}
+                  {confirmPassword && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      {password === confirmPassword ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          <span className="text-xs text-green-600">Passwords match</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-4 h-4 rounded-full border-2 border-red-500 flex items-center justify-center">
+                            <span className="text-red-500 text-xs">✕</span>
+                          </div>
+                          <span className="text-xs text-red-600">Passwords do not match</span>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

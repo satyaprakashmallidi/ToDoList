@@ -239,7 +239,7 @@ export const AddTasks: React.FC = () => {
   };
 
   return (
-    <div className="space-y-3 sm:space-y-4">
+    <div className="space-y-3 sm:space-y-4 bg-white min-h-full">
       {/* Main Content */}
       <div className="flex flex-col items-center justify-center text-center px-4 sm:px-6 min-h-[70vh] py-8">
         <div className="w-full max-w-4xl">

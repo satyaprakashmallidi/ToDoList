@@ -148,7 +148,7 @@ export const Calendar: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 flex-shrink-0">
         <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Calendar</h1>
         <div className="flex items-center justify-center sm:justify-end gap-2">

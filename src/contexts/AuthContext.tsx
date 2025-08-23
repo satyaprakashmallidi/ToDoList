@@ -8,7 +8,7 @@ interface AuthContextType {
   loading: boolean
   connectionStatus: 'connecting' | 'connected' | 'error' | 'offline'
   signIn: (email: string, password: string) => Promise<{ error: any }>
-  signUp: (email: string, password: string) => Promise<{ error: any }>
+  signUp: (email: string, password: string, userData?: { firstName: string; lastName: string; fullName: string }) => Promise<{ error: any }>
   signOut: () => Promise<{ error: any }>
 }
 
@@ -69,12 +69,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Update profile only on initial sign in
       if (event === 'SIGNED_IN' && newSession?.user && !isInitialized) {
         try {
+          const userMeta = newSession.user.user_metadata;
           await supabase
             .from('profiles')
             .upsert({
               id: newSession.user.id,
               email: newSession.user.email!,
-              name: newSession.user.user_metadata?.full_name || newSession.user.user_metadata?.name || null,
+              full_name: userMeta?.full_name || userMeta?.name || null,
+              first_name: userMeta?.first_name || null,
+              last_name: userMeta?.last_name || null,
               role: 'user' as const,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
@@ -126,8 +129,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { error };
   };
 
-  const signUp = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password });
+  const signUp = async (email: string, password: string, userData?: { firstName: string; lastName: string; fullName: string }) => {
+    const signUpData: any = { email, password };
+    
+    // Add user metadata if provided
+    if (userData) {
+      signUpData.options = {
+        data: {
+          first_name: userData.firstName,
+          last_name: userData.lastName,
+          full_name: userData.fullName
+        }
+      };
+    }
+    
+    const { error } = await supabase.auth.signUp(signUpData);
     if (error && process.env.NODE_ENV === 'development') {
       console.error('Sign up error:', error);
     }

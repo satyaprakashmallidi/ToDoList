@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Menu } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChat } from '../hooks/useChat';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
@@ -25,13 +25,13 @@ export const Chat: React.FC = () => {
 
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(true);
 
   const handleConversationSelect = (conversationId: string, type: 'direct' | 'group') => {
     const conversation = conversations.find(c => c.id === conversationId);
     if (conversation) {
       setActiveConversation(conversation);
-      setShowSidebar(false); // Hide sidebar on mobile when selecting a conversation
+      setIsMobileSidebarOpen(false); // Close sidebar on mobile when selecting conversation
     }
   };
 
@@ -44,11 +44,11 @@ export const Chat: React.FC = () => {
   const handleCreateGroup = async (name: string, memberIds: string[]) => {
     const groupId = await createGroup(name, memberIds);
     if (groupId) {
-      // Find the newly created group and select it
       setTimeout(() => {
         const newGroup = conversations.find(c => c.id === groupId);
         if (newGroup) {
           setActiveConversation(newGroup);
+          setIsMobileSidebarOpen(false);
         }
       }, 100);
     }
@@ -58,138 +58,123 @@ export const Chat: React.FC = () => {
     const success = await deleteGroup(groupId);
     if (success) {
       setActiveConversation(null);
-      setShowSidebar(true); // Show sidebar on mobile after deleting
+      setIsMobileSidebarOpen(true);
     }
     return success;
   };
 
+  const handleBackToList = () => {
+    setActiveConversation(null);
+    setIsMobileSidebarOpen(true);
+  };
+
   if (!user) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-gray-500">Please log in to access chat.</p>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-2xl">💬</span>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Messages</h2>
+          <p className="text-gray-600">Please log in to access chat.</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full bg-gray-50 relative">
-      {/* Error Display */}
-      {error && (
-        <div className="fixed top-4 right-4 bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg shadow-lg z-50">
-          <div className="flex items-center justify-between">
-            <p className="text-sm">{error}</p>
-            <button 
-              onClick={clearError}
-              className="ml-2 text-red-500 hover:text-red-700"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Mobile Header - Only visible on mobile when conversation is selected */}
-      {activeConversation && (
-        <div className="md:hidden absolute top-0 left-0 right-0 bg-white border-b border-gray-200 p-4 z-40 flex items-center gap-3">
-          <button
-            onClick={() => {
-              setActiveConversation(null);
-              setShowSidebar(true);
-            }}
-            className="p-2 hover:bg-gray-100 rounded-lg"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-semibold ${
-            activeConversation.type === 'group' ? 'bg-green-500' : 'bg-blue-500'
-          }`}>
-            {activeConversation.type === 'group' ? (
-              <div className="w-4 h-4 flex items-center justify-center">👥</div>
-            ) : (
-              activeConversation.name.charAt(0).toUpperCase()
-            )}
-          </div>
+    <div className="h-full flex flex-col bg-white">
+      {/* Top Header - Always Visible */}
+      <header className="flex-shrink-0 bg-white border-b border-gray-200 px-3 sm:px-4 py-2 sm:py-3">
+        <div className="flex items-center justify-between">
           <div>
-            <h2 className="font-semibold text-gray-900">{activeConversation.name}</h2>
-            <p className="text-sm text-gray-500">
-              {activeConversation.type === 'group' 
-                ? `${activeConversation.member_count || 0} members`
-                : 'Direct message'
-              }
-            </p>
+            <h1 className="text-base sm:text-lg font-semibold text-gray-900">Messages</h1>
+            <p className="text-xs sm:text-sm text-gray-600">Connect with your team</p>
           </div>
+          <button
+            onClick={() => setShowCreateGroupModal(true)}
+            className="inline-flex items-center px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+          >
+            <Plus className="w-3 sm:w-4 h-3 sm:h-4 mr-1 sm:mr-1.5" />
+            <span className="hidden xs:inline">New Group</span>
+            <span className="xs:hidden">New</span>
+          </button>
         </div>
-      )}
 
-      {/* Chat Sidebar - Desktop: always visible, Mobile: overlay when showSidebar is true or no active conversation */}
-      <div className={`
-        ${activeConversation && !showSidebar ? 'hidden md:flex' : 'flex'}
-        ${showSidebar ? 'md:relative absolute inset-0 z-30' : 'relative'}
-        w-full md:w-80 bg-white border-r border-gray-200 flex-col h-full
-      `}>
-        {/* Mobile close button */}
-        {showSidebar && (
-          <div className="md:hidden flex justify-between items-center p-4 border-b border-gray-200">
-            <h1 className="text-xl font-semibold text-gray-900">Messages</h1>
-            <button
-              onClick={() => setShowSidebar(false)}
-              className="p-2 hover:bg-gray-100 rounded-lg"
-            >
-              ×
-            </button>
+        {/* Error Display */}
+        {error && (
+          <div className="mt-3 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg">
+            <div className="flex items-center justify-between">
+              <p className="text-sm">{error}</p>
+              <button 
+                onClick={clearError}
+                className="ml-2 text-red-500 hover:text-red-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
-        
-        <ChatSidebar
-          conversations={conversations}
-          activeConversationId={activeConversation?.id || null}
-          onConversationSelect={handleConversationSelect}
-          onCreateGroup={() => setShowCreateGroupModal(true)}
-          currentUserId={user.id}
-          loading={loading}
-        />
-      </div>
+      </header>
 
-      {/* Mobile Menu Button - Only show when no conversation is selected and sidebar is hidden */}
-      {!activeConversation && !showSidebar && (
-        <button
-          onClick={() => setShowSidebar(true)}
-          className="md:hidden fixed top-4 left-4 z-40 p-3 bg-blue-500 text-white rounded-full shadow-lg"
-        >
-          <Menu className="w-6 h-6" />
-        </button>
-      )}
-
-      {/* Chat Area */}
-      <div className={`
-        flex-1 flex flex-col
-        ${activeConversation ? 'block' : 'hidden md:block'}
-        ${activeConversation ? 'pt-16 md:pt-0' : ''}
-      `}>
-        <ChatArea
-          conversation={activeConversation}
-          messages={activeConversation ? messages[activeConversation.id] || [] : []}
-          currentUserId={user.id}
-          onLoadMessages={loadMessages}
-          onDeleteGroup={handleDeleteGroup}
-        />
-
-        {/* Message Input */}
-        {activeConversation && (
-          <MessageInput
-            onSendMessage={handleSendMessage}
-            disabled={loading}
+      {/* Main Chat Content */}
+      <div className="flex-1 flex min-h-0">
+        {/* Sidebar */}
+        <div className={`
+          ${isMobileSidebarOpen ? 'flex' : 'hidden'} 
+          md:flex w-full md:w-80 lg:w-96 flex-col bg-gray-50 border-r border-gray-200
+        `}>
+          <ChatSidebar
+            conversations={conversations}
+            activeConversationId={activeConversation?.id || null}
+            onConversationSelect={handleConversationSelect}
+            onCreateGroup={() => setShowCreateGroupModal(true)}
+            currentUserId={user.id}
+            loading={loading}
           />
-        )}
-      </div>
+        </div>
 
-      {/* Overlay for mobile sidebar */}
-      {showSidebar && (
-        <div
-          className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-20"
-          onClick={() => setShowSidebar(false)}
-        />
-      )}
+        {/* Chat Area */}
+        <div className={`
+          ${!isMobileSidebarOpen ? 'flex' : 'hidden'} 
+          md:flex flex-1 flex-col min-h-0
+        `}>
+          {activeConversation ? (
+            <>
+              <ChatArea
+                conversation={activeConversation}
+                messages={activeConversation ? messages[activeConversation.id] || [] : []}
+                currentUserId={user.id}
+                onLoadMessages={loadMessages}
+                onDeleteGroup={handleDeleteGroup}
+                onBackToList={handleBackToList}
+              />
+              
+              <MessageInput
+                onSendMessage={handleSendMessage}
+                disabled={loading}
+              />
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center bg-gray-50">
+              <div className="text-center">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="text-2xl">💬</span>
+                </div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No conversation selected</h3>
+                <p className="text-gray-600 mb-4">Choose a conversation to start messaging</p>
+                <button
+                  onClick={() => setShowCreateGroupModal(true)}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create your first group
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Create Group Modal */}
       <CreateGroupModal

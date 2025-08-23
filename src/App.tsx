@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { TimeStoreProvider } from './contexts/TimeStore'
+import { TaskStoreProvider } from './contexts/TaskStore'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar } from './components/Sidebar'
@@ -75,7 +77,7 @@ const AppLayout: React.FC = () => {
   }, [sidebarOpen])
 
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 flex overflow-hidden">
+    <div className="h-screen bg-white flex overflow-hidden">
       <Sidebar isOpen={sidebarOpen} onClose={toggleSidebar} onToggle={toggleSidebar} />
       
       {/* Mobile toggle button when sidebar is closed - only for very small screens */}
@@ -134,43 +136,47 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Router>
-          <Routes>
-            <Route path="/login" element={
-              <PublicRoute>
-                <Login />
-              </PublicRoute>
-            } />
-            <Route path="/signup" element={
-              <PublicRoute>
-                <Signup />
-              </PublicRoute>
-            } />
-            
-            <Route path="/app" element={
-              <ProtectedRoute>
-                <AppLayout />
-              </ProtectedRoute>
-            }>
-              <Route index element={<AddTasks />} />
-              <Route path="new-task" element={<AddTasks />} />
-              <Route path="tasks" element={<Tasks />} />
-              <Route path="teams" element={<Teams />} />
-              <Route path="chats" element={<Chat />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="calendar" element={<Calendar />} />
-              <Route path="profile" element={<Profile />} />
-              <Route path="debug" element={<DebugSupabase />} />
-            </Route>
-            
-            <Route path="/" element={
-              <PublicRoute>
-                <Landing />
-              </PublicRoute>
-            } />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Router>
+        <TimeStoreProvider>
+          <TaskStoreProvider>
+            <Router>
+              <Routes>
+                <Route path="/login" element={
+                  <PublicRoute>
+                    <Login />
+                  </PublicRoute>
+                } />
+                <Route path="/signup" element={
+                  <PublicRoute>
+                    <Signup />
+                  </PublicRoute>
+                } />
+                
+                <Route path="/app" element={
+                  <ProtectedRoute>
+                    <AppLayout />
+                  </ProtectedRoute>
+                }>
+                  <Route index element={<AddTasks />} />
+                  <Route path="new-task" element={<AddTasks />} />
+                  <Route path="tasks" element={<Tasks />} />
+                  <Route path="teams" element={<Teams />} />
+                  <Route path="chats" element={<Chat />} />
+                  <Route path="dashboard" element={<Dashboard />} />
+                  <Route path="calendar" element={<Calendar />} />
+                  <Route path="profile" element={<Profile />} />
+                  <Route path="debug" element={<DebugSupabase />} />
+                </Route>
+                
+                <Route path="/" element={
+                  <PublicRoute>
+                    <Landing />
+                  </PublicRoute>
+                } />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Router>
+          </TaskStoreProvider>
+        </TimeStoreProvider>
       </AuthProvider>
     </ErrorBoundary>
   )
