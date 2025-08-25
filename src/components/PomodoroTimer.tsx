@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { useTimeStore } from '../contexts/TimeStore';
 
 interface PomodoroTimerProps {
@@ -6,161 +6,44 @@ interface PomodoroTimerProps {
   onPhaseChange?: (phase: 'work' | 'short' | 'long') => void;
 }
 
-interface PersistentTimerState {
-  phase: 'work' | 'short' | 'long';
-  isRunning: boolean;
-  startedAt: number;
-  elapsedMs: number;
-  workCount: number;
-}
-
 const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ size = 256, onPhaseChange }) => {
-  const { startTimer: startTimeTracking, pauseTimer: pauseTimeTracking } = useTimeStore();
+  const { 
+    pomodoro, 
+    startPomodoroTimer, 
+    pausePomodoroTimer,
+    lastTick
+  } = useTimeStore();
   
-  const [phase, setPhase] = useState<'work' | 'short' | 'long'>('work');
-  const [isRunning, setIsRunning] = useState(false);
-  const [startedAt, setStartedAt] = useState(0);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [workCount, setWorkCount] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(25 * 60);
-  
-  const animationFrameRef = useRef<number>();
   const audioContextRef = useRef<AudioContext | null>(null);
+  const prevPhaseRef = useRef(pomodoro.phase);
 
-  const DURATIONS = {
-    work: 25 * 60 * 1000, // Convert to milliseconds
-    short: 5 * 60 * 1000,
-    long: 15 * 60 * 1000,
-    longEvery: 3
-  };
-
-  // State loaded flag to prevent multiple loads
-  const [stateLoaded, setStateLoaded] = useState(false);
-
-  // Handle phase completion and transitions
-  const handlePhaseComplete = useCallback((currentPhase: 'work' | 'short' | 'long', currentWorkCount: number) => {
-    playBeep();
-    
-    if (currentPhase === 'work') {
-      // Only add work hours for completed 25-minute work sessions
-      // This will be handled by the time tracking system
-      const newWorkCount = currentWorkCount + 1;
-      setWorkCount(newWorkCount);
+  // Handle phase changes and call onPhaseChange callback
+  useEffect(() => {
+    if (prevPhaseRef.current !== pomodoro.phase) {
+      onPhaseChange?.(pomodoro.phase);
+      prevPhaseRef.current = pomodoro.phase;
       
-      // Determine next phase
-      const nextPhase = newWorkCount % DURATIONS.longEvery === 0 ? 'long' : 'short';
-      setPhase(nextPhase);
-      onPhaseChange?.(nextPhase);
+      // Play beep on phase change (completion)
+      if (!pomodoro.isRunning) {
+        playBeep();
+      }
+    }
+  }, [pomodoro.phase, pomodoro.isRunning, onPhaseChange]);
+
+  // Calculate remaining time based on global state
+  // Use lastTick to ensure we recalculate on every timer tick
+  const getRemainingTime = useCallback(() => {
+    if (pomodoro.isRunning && pomodoro.startedAt > 0) {
+      const now = Date.now();
+      const currentElapsed = pomodoro.elapsedMs + (now - pomodoro.startedAt);
+      const remaining = Math.max(0, pomodoro.totalTimeMs - currentElapsed);
+      return remaining;
     } else {
-      // Break completed, return to work
-      if (currentPhase === 'long') setWorkCount(0);
-      setPhase('work');
-      onPhaseChange?.('work');
+      const remaining = pomodoro.totalTimeMs - pomodoro.elapsedMs;
+      return Math.max(0, remaining);
     }
-    
-    setElapsedMs(0);
-  }, [onPhaseChange]);
+  }, [pomodoro, lastTick]);
 
-  // Load and reconstruct state from localStorage
-  const loadState = useCallback(() => {
-    if (stateLoaded) return; // Prevent multiple loads
-    
-    const savedState = localStorage.getItem('persistentPomodoro');
-    if (savedState) {
-      try {
-        const state: PersistentTimerState = JSON.parse(savedState);
-        const now = Date.now();
-        
-        setPhase(state.phase);
-        setWorkCount(state.workCount);
-        
-        if (state.isRunning) {
-          const totalElapsed = state.elapsedMs + (now - state.startedAt);
-          const phaseDuration = DURATIONS[state.phase];
-          
-          if (totalElapsed >= phaseDuration) {
-            // Timer completed while away - handle phase transition
-            handlePhaseComplete(state.phase, state.workCount);
-            setIsRunning(false);
-            setElapsedMs(0);
-            setStartedAt(0);
-          } else {
-            // Timer still running - resume with accurate time
-            setIsRunning(true);
-            setStartedAt(now);
-            setElapsedMs(totalElapsed);
-            
-            // Set accurate time left for display
-            const remaining = phaseDuration - totalElapsed;
-            setTimeLeft(remaining);
-            
-            // Resume time tracking for all phases
-            if (state.phase === 'work') {
-              startTimeTracking('focus');
-            } else if (state.phase === 'short') {
-              startTimeTracking('shortBreak');
-            } else if (state.phase === 'long') {
-              startTimeTracking('longBreak');
-            }
-          }
-        } else {
-          setIsRunning(false);
-          setElapsedMs(state.elapsedMs);
-          setStartedAt(0);
-          
-          // Set correct timeLeft for paused timer
-          const phaseDuration = DURATIONS[state.phase];
-          const remaining = phaseDuration - state.elapsedMs;
-          setTimeLeft(Math.max(0, remaining));
-        }
-      } catch (error) {
-        console.log('Failed to load timer state');
-      }
-    }
-    setStateLoaded(true);
-  }, [stateLoaded, startTimeTracking, handlePhaseComplete]);
-
-  useEffect(() => {
-    if (!stateLoaded) {
-      loadState();
-    }
-  }, [loadState, stateLoaded]);
-
-  // Save state to localStorage with current elapsed time
-  const saveState = useCallback(() => {
-    const now = Date.now();
-    const currentElapsed = isRunning && startedAt > 0 
-      ? elapsedMs + (now - startedAt)
-      : elapsedMs;
-
-    const state: PersistentTimerState = {
-      phase,
-      isRunning,
-      startedAt: isRunning ? now : startedAt,
-      elapsedMs: currentElapsed,
-      workCount
-    };
-    localStorage.setItem('persistentPomodoro', JSON.stringify(state));
-  }, [phase, isRunning, startedAt, elapsedMs, workCount]);
-
-  useEffect(() => {
-    saveState();
-  }, [saveState]);
-
-  // Periodic save while timer is running (every 3 seconds)
-  useEffect(() => {
-    let saveInterval: NodeJS.Timeout;
-    
-    if (isRunning) {
-      saveInterval = setInterval(saveState, 3000);
-    }
-    
-    return () => {
-      if (saveInterval) {
-        clearInterval(saveInterval);
-      }
-    };
-  }, [isRunning, saveState]);
 
   const formatTime = (milliseconds: number): string => {
     const totalSeconds = Math.ceil(milliseconds / 1000);
@@ -172,7 +55,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ size = 256, onPhaseChange
   const playBeep = () => {
     try {
       if (!audioContextRef.current) {
-        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         if (AudioContext) {
           audioContextRef.current = new AudioContext();
         }
@@ -199,164 +82,31 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ size = 256, onPhaseChange
         oscillator.start(audioContextRef.current.currentTime);
         oscillator.stop(audioContextRef.current.currentTime + 0.7);
       }
-    } catch (error) {
+    } catch {
       console.log('Audio not available');
     }
   };
 
-  // Animation loop for timer updates with background execution support
-  const updateTimer = useCallback(() => {
-    if (isRunning && startedAt > 0) {
-      const now = Date.now();
-      const currentElapsed = elapsedMs + (now - startedAt);
-      const phaseDuration = DURATIONS[phase];
-      
-      if (currentElapsed >= phaseDuration) {
-        // Phase completed
-        handlePhaseComplete(phase, workCount);
-        setIsRunning(false);
-        setElapsedMs(0);
-        setStartedAt(0);
-        
-        // Stop time tracking for any phase when timer completes
-        pauseTimeTracking();
-      } else {
-        // Update remaining time for display
-        const remaining = phaseDuration - currentElapsed;
-        setTimeLeft(remaining);
-      }
-    }
-    
-    // Continue animation loop only if timer is running
-    if (isRunning) {
-      animationFrameRef.current = requestAnimationFrame(updateTimer);
-    }
-  }, [isRunning, startedAt, elapsedMs, phase, workCount, handlePhaseComplete, pauseTimeTracking]);
-
-  useEffect(() => {
-    if (isRunning) {
-      animationFrameRef.current = requestAnimationFrame(updateTimer);
-    } else {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    }
-    
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [isRunning, updateTimer]);
-
-  const startTimer = () => {
-    const now = Date.now();
-    setIsRunning(true);
-    setStartedAt(now);
-    
-    // Start time tracking for both work and break sessions
-    if (phase === 'work') {
-      startTimeTracking('focus');
-    } else if (phase === 'short') {
-      startTimeTracking('shortBreak');
-    } else if (phase === 'long') {
-      startTimeTracking('longBreak');
-    }
-  };
-
-  const pauseTimer = () => {
-    if (isRunning) {
-      const now = Date.now();
-      setElapsedMs(prev => prev + (now - startedAt));
-      setIsRunning(false);
-      setStartedAt(0);
-      
-      // Pause time tracking for both work and break sessions
-      pauseTimeTracking();
-    }
-  };
 
   const toggleTimer = () => {
-    if (isRunning) {
-      pauseTimer();
+    if (pomodoro.isRunning) {
+      pausePomodoroTimer();
     } else {
-      startTimer();
+      startPomodoroTimer();
     }
   };
 
-  // Handle visibility change to maintain accuracy
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden && isRunning) {
-        // Page becoming hidden - save current state
-        const now = Date.now();
-        setElapsedMs(prev => prev + (now - startedAt));
-        setStartedAt(now);
-      } else if (!document.hidden && isRunning) {
-        // Page becoming visible - update start time
-        setStartedAt(Date.now());
-      }
-    };
 
-    const handleBeforeUnload = () => {
-      // Save state before page unload/refresh
-      saveState();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [isRunning, startedAt, saveState]);
-
-  // Component unmount cleanup - save state when navigating away
-  useEffect(() => {
-    return () => {
-      if (isRunning) {
-        const now = Date.now();
-        const currentElapsed = elapsedMs + (now - startedAt);
-        
-        const state: PersistentTimerState = {
-          phase,
-          isRunning,
-          startedAt: now,
-          elapsedMs: currentElapsed,
-          workCount
-        };
-        localStorage.setItem('persistentPomodoro', JSON.stringify(state));
-      }
-    };
-  }, [isRunning, startedAt, elapsedMs, phase, workCount]);
-
-  // Update timeLeft based on current state
-  useEffect(() => {
-    const phaseDuration = DURATIONS[phase];
-    if (isRunning && startedAt > 0) {
-      const now = Date.now();
-      const currentElapsed = elapsedMs + (now - startedAt);
-      const remaining = Math.max(0, phaseDuration - currentElapsed);
-      setTimeLeft(remaining);
-    } else {
-      const remaining = phaseDuration - elapsedMs;
-      setTimeLeft(Math.max(0, remaining));
-    }
-  }, [phase, elapsedMs, isRunning, startedAt]);
-
-  // Calculate progress for the ring
-  const totalTime = DURATIONS[phase];
-  const currentElapsed = isRunning && startedAt > 0 
-    ? elapsedMs + (Date.now() - startedAt)
-    : elapsedMs;
-  const progress = Math.min(1, currentElapsed / totalTime);
+  // Calculate progress for the ring based on current elapsed time
+  const timeLeft = getRemainingTime();
+  const currentElapsed = pomodoro.totalTimeMs - timeLeft;
+  const progress = Math.min(1, currentElapsed / pomodoro.totalTimeMs);
   const radius = 82;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference * (1 - progress);
 
   const getPhaseColor = () => {
-    switch (phase) {
+    switch (pomodoro.phase) {
       case 'work': return '#2563eb';
       case 'short': return '#10b981';
       case 'long': return '#f59e0b';
@@ -364,9 +114,6 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ size = 256, onPhaseChange
     }
   };
 
-  const getPhaseLabel = () => {
-    return phase === 'work' ? 'Focus' : 'Break';
-  };
 
   return (
     <div className="flex flex-col items-center gap-4">
@@ -422,10 +169,10 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ size = 256, onPhaseChange
       <button
         onClick={toggleTimer}
         className="w-8 h-8 rounded-full border border-gray-300 bg-white flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-blue-50 hover:border-blue-300 hover:shadow-md active:scale-95"
-        aria-label={isRunning ? "Pause" : "Start"}
+        aria-label={pomodoro.isRunning ? "Pause" : "Start"}
       >
         <div className="transition-all duration-300 ease-in-out">
-          {isRunning ? (
+          {pomodoro.isRunning ? (
             <svg 
               width="14" 
               height="14" 

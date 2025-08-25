@@ -16,12 +16,22 @@ interface RunningSession {
   kind: 'focus' | 'shortBreak' | 'longBreak'; // Added for break tracking
 }
 
+interface PomodoroState {
+  phase: 'work' | 'short' | 'long';
+  isRunning: boolean;
+  startedAt: number;
+  elapsedMs: number;
+  workCount: number;
+  totalTimeMs: number;
+}
+
 interface TimeStoreState {
   isRunning: boolean;
   isPaused: boolean;
   runningSession: RunningSession | null;
   sessions: TimeSession[];
   lastTick: number;
+  pomodoro: PomodoroState;
 }
 
 interface TimeStoreContextType extends TimeStoreState {
@@ -34,12 +44,26 @@ interface TimeStoreContextType extends TimeStoreState {
   getDayMinutesByCategory: () => { Focus: number; Meetings: number; Breaks: number; Other: number };
   getWeekMinutesByCategory: () => { Focus: number; Meetings: number; Breaks: number; Other: number };
   getMonthMinutesByCategory: () => { Focus: number; Meetings: number; Breaks: number; Other: number };
+  // Pomodoro-specific methods
+  startPomodoroTimer: () => void;
+  pausePomodoroTimer: () => void;
+  resetPomodoroTimer: () => void;
+  skipPomodoroPhase: () => void;
 }
 
 const TimeStoreContext = createContext<TimeStoreContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'time-store-data';
 const SESSION_STORAGE_KEY = 'time-store-running-session';
+const POMODORO_STORAGE_KEY = 'time-store-pomodoro';
+
+// Pomodoro constants
+const POMODORO_DURATIONS = {
+  work: 25 * 60 * 1000, // 25 minutes in milliseconds
+  short: 5 * 60 * 1000, // 5 minutes in milliseconds
+  long: 15 * 60 * 1000, // 15 minutes in milliseconds
+  longEvery: 3 // Long break every 3 work sessions
+};
 
 // Global timer singleton - survives all component unmounts and browser tabs
 class GlobalTimer {
@@ -163,12 +187,30 @@ const generateSessionId = (): string => {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 };
 
+const getNextPomodoroPhase = (currentPhase: 'work' | 'short' | 'long', workCount: number): 'work' | 'short' | 'long' => {
+  if (currentPhase === 'work') {
+    // After work, determine if it should be long or short break
+    return (workCount + 1) % POMODORO_DURATIONS.longEvery === 0 ? 'long' : 'short';
+  } else {
+    // After any break, return to work
+    return 'work';
+  }
+};
+
 export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [runningSession, setRunningSession] = useState<RunningSession | null>(null);
   const [sessions, setSessions] = useState<TimeSession[]>([]);
   const [lastTick, setLastTick] = useState(Date.now());
+  const [pomodoro, setPomodoro] = useState<PomodoroState>({
+    phase: 'work',
+    isRunning: false,
+    startedAt: 0,
+    elapsedMs: 0,
+    workCount: 0,
+    totalTimeMs: POMODORO_DURATIONS.work
+  });
   
   const globalTimer = useRef(GlobalTimer.getInstance());
   const lastSaveRef = useRef(Date.now());
@@ -179,6 +221,16 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (!mountedRef.current || !tabSyncRef.current) return;
+      
+      if (e.key === POMODORO_STORAGE_KEY && e.newValue) {
+        // Sync pomodoro state from another tab
+        try {
+          const pomodoroData = JSON.parse(e.newValue);
+          setPomodoro(pomodoroData);
+        } catch (error) {
+          console.error('Failed to sync pomodoro from another tab:', error);
+        }
+      }
       
       if (e.key === SESSION_STORAGE_KEY) {
         // Another tab updated the running session
@@ -262,6 +314,31 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
         console.error('Failed to load historical time store data:', error);
       }
     }
+
+    // Load and restore pomodoro state
+    const pomodoroData = localStorage.getItem(POMODORO_STORAGE_KEY);
+    if (pomodoroData) {
+      try {
+        const savedPomodoro = JSON.parse(pomodoroData);
+        if (savedPomodoro.isRunning) {
+          // When restoring a running timer, we need to calculate how much time has passed
+          const now = Date.now();
+          const additionalElapsed = now - savedPomodoro.startedAt;
+          const totalElapsed = savedPomodoro.elapsedMs + additionalElapsed;
+          
+          setPomodoro({
+            ...savedPomodoro,
+            startedAt: now, // Reset startedAt to current time
+            elapsedMs: totalElapsed // Update elapsed with the additional time
+          });
+        } else {
+          setPomodoro(savedPomodoro);
+        }
+      } catch (error) {
+        console.error('Failed to restore pomodoro state:', error);
+        localStorage.removeItem(POMODORO_STORAGE_KEY);
+      }
+    }
     
     // Load and restore running session
     const runningData = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -314,6 +391,32 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
     const now = Date.now();
     setLastTick(now);
 
+    // Update pomodoro timer - DON'T update elapsedMs here, just check for completion
+    if (pomodoro.isRunning && pomodoro.startedAt > 0) {
+      const currentElapsed = pomodoro.elapsedMs + (now - pomodoro.startedAt);
+      
+      if (currentElapsed >= pomodoro.totalTimeMs) {
+        // Phase completed - handle phase transition
+        const nextPhase = getNextPomodoroPhase(pomodoro.phase, pomodoro.workCount);
+        const newWorkCount = pomodoro.phase === 'work' ? pomodoro.workCount + 1 : 
+                           (pomodoro.phase === 'long' ? 0 : pomodoro.workCount);
+        
+        setPomodoro(prev => ({
+          ...prev,
+          phase: nextPhase,
+          isRunning: false,
+          startedAt: 0,
+          elapsedMs: 0,
+          workCount: newWorkCount,
+          totalTimeMs: POMODORO_DURATIONS[nextPhase]
+        }));
+        
+        // Trigger completion notification (could add sound/notification here)
+        console.log(`Pomodoro phase completed: ${pomodoro.phase} -> ${nextPhase}`);
+      }
+      // Remove the else block that was updating elapsedMs on every tick
+    }
+
     if (isRunning && runningSession) {
       setRunningSession(prev => {
         if (!prev) return null;
@@ -335,7 +438,7 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
       saveToStorage();
       lastSaveRef.current = now;
     }
-  }, [isRunning, runningSession]);
+  }, [isRunning, runningSession, pomodoro]);
 
   // Subscribe to global timer
   useEffect(() => {
@@ -377,6 +480,9 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
       } else {
         localStorage.removeItem(SESSION_STORAGE_KEY);
       }
+
+      // Save pomodoro state
+      localStorage.setItem(POMODORO_STORAGE_KEY, JSON.stringify(pomodoro));
     } catch (error) {
       console.error('Failed to save timer state:', error);
     }
@@ -387,7 +493,7 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
         tabSyncRef.current = true;
       }
     }, 100);
-  }, [isRunning, isPaused, runningSession, sessions]);
+  }, [isRunning, isPaused, runningSession, sessions, pomodoro]);
 
   // Handle midnight boundary - split running session
   const handleMidnightBoundary = React.useCallback((now: number) => {
@@ -629,12 +735,84 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
     };
   }, [sessions, runningSession]);
 
+  // Pomodoro timer methods
+  const startPomodoroTimer = React.useCallback(() => {
+    const now = Date.now();
+    setPomodoro(prev => ({
+      ...prev,
+      isRunning: true,
+      startedAt: now
+    }));
+    
+    // Start the global timer if not already running
+    if (!globalTimer.current.isRunning()) {
+      globalTimer.current.start();
+    }
+    
+    // Start time tracking based on phase
+    const kind = pomodoro.phase === 'work' ? 'focus' : 
+                pomodoro.phase === 'short' ? 'shortBreak' : 'longBreak';
+    startTimer(kind);
+  }, [pomodoro.phase, startTimer]);
+
+  const pausePomodoroTimer = React.useCallback(() => {
+    setPomodoro(prev => {
+      if (prev.isRunning && prev.startedAt > 0) {
+        const now = Date.now();
+        const additionalElapsed = now - prev.startedAt;
+        return {
+          ...prev,
+          isRunning: false,
+          elapsedMs: prev.elapsedMs + additionalElapsed,
+          startedAt: 0
+        };
+      }
+      return prev;
+    });
+    
+    // Pause time tracking
+    pauseTimer();
+  }, [pauseTimer]);
+
+  const resetPomodoroTimer = React.useCallback(() => {
+    setPomodoro({
+      phase: 'work',
+      isRunning: false,
+      startedAt: 0,
+      elapsedMs: 0,
+      workCount: 0,
+      totalTimeMs: POMODORO_DURATIONS.work
+    });
+    
+    // Reset time tracking
+    resetTimer();
+  }, [resetTimer]);
+
+  const skipPomodoroPhase = React.useCallback(() => {
+    const nextPhase = getNextPomodoroPhase(pomodoro.phase, pomodoro.workCount);
+    const newWorkCount = pomodoro.phase === 'work' ? pomodoro.workCount + 1 : 
+                       (pomodoro.phase === 'long' ? 0 : pomodoro.workCount);
+    
+    setPomodoro({
+      phase: nextPhase,
+      isRunning: false,
+      startedAt: 0,
+      elapsedMs: 0,
+      workCount: newWorkCount,
+      totalTimeMs: POMODORO_DURATIONS[nextPhase]
+    });
+    
+    // Stop current time tracking
+    pauseTimer();
+  }, [pomodoro.phase, pomodoro.workCount, pauseTimer]);
+
   const value: TimeStoreContextType = {
     isRunning,
     isPaused,
     runningSession,
     sessions,
     lastTick,
+    pomodoro,
     startTimer,
     pauseTimer,
     resetTimer,
@@ -643,7 +821,11 @@ export const TimeStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
     getMonthMinutes,
     getDayMinutesByCategory,
     getWeekMinutesByCategory,
-    getMonthMinutesByCategory
+    getMonthMinutesByCategory,
+    startPomodoroTimer,
+    pausePomodoroTimer,
+    resetPomodoroTimer,
+    skipPomodoroPhase
   };
 
   return (
