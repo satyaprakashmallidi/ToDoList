@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { TimeStoreProvider } from './contexts/TimeStore'
 import { TaskStoreProvider } from './contexts/TaskStore'
@@ -20,6 +20,9 @@ import { Profile } from './pages/Profile'
 import { DebugSupabase } from './pages/DebugSupabase'
 
 const AppLayout: React.FC = () => {
+  const location = useLocation()
+  const isChat = location.pathname.includes('/chats')
+  
   // Default to true on tablet and desktop, false on mobile
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -93,7 +96,9 @@ const AppLayout: React.FC = () => {
 
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 overflow-y-auto">
-          <div className={`animate-in fade-in duration-300 h-full py-4 sm:py-6 ${
+          <div className={`animate-in fade-in duration-300 h-full ${
+            isChat ? '' : 'py-4 sm:py-6'
+          } ${
             !sidebarOpen 
               ? 'pl-16 pr-3 sm:pl-8 sm:pr-6 lg:pr-8' // Extra left padding on xs for button, normal on sm+ for collapsed sidebar
               : 'px-3 sm:px-6 lg:px-8'

@@ -135,9 +135,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
             </div>
 
             {/* Footer - Account information only */}
-            <div className="border-t border-gray-200 p-5 flex-shrink-0">
+            <div className="border-t border-gray-200 p-4 flex-shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
+                <div className="w-7 h-7 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
                   <span className="text-gray-600 text-sm font-semibold">
                     {user?.email?.charAt(0).toUpperCase() || 'U'}
                   </span>
@@ -192,8 +192,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
             </nav>
 
             {/* Collapsed Footer - Account avatar only */}
-            <div className="border-t border-gray-200 p-3 flex-shrink-0 flex justify-center">
-              <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
+            <div className="border-t border-gray-200 p-2 flex-shrink-0 flex justify-center">
+              <div className="w-7 h-7 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
                 <span className="text-gray-600 text-sm font-semibold">
                   {user?.email?.charAt(0).toUpperCase() || 'U'}
                 </span>
