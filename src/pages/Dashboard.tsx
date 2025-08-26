@@ -1042,7 +1042,7 @@ export const Dashboard: React.FC = () => {
                   <h3 className="text-xl font-semibold">Focus</h3>
                   <div className="focus-card-image">
                     <img 
-                      src="https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-5410-61fa-a8fe-ef6d64cccc53/raw?se=2025-08-26T10%3A42%3A51Z&sp=r&sv=2024-08-04&sr=b&scid=924d8e5b-83eb-511d-b948-981f8e0447bd&skoid=5c72dd08-68ae-4091-b4e1-40ccec0693ae&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-08-26T02%3A41%3A34Z&ske=2025-08-27T02%3A41%3A34Z&sks=b&skv=2024-08-04&sig=tGnIiy0b/djIQSFzZd8Hjk4sYFT6eq5j0s7iEzkWWDg%3D"
+                      src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756231163/ChatGPT_Image_Aug_26_2025_10_23_28_PM_t6qtq3.png"
                       alt="Focus" 
                       className="focus-illustration w-full h-full object-cover"
                     />
@@ -1062,7 +1062,7 @@ export const Dashboard: React.FC = () => {
                   <h3 className="text-xl font-semibold">Relax</h3>
                   <div className="focus-card-image">
                     <img 
-                      src="https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-60f4-61fa-9080-ab3371db3c2f/raw?se=2025-08-26T10%3A42%3A51Z&sp=r&sv=2024-08-04&sr=b&scid=bc1e0b54-aa25-5b31-ba69-9b04d21b3a64&skoid=5c72dd08-68ae-4091-b4e1-40ccec0693ae&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-08-26T02%3A27%3A56Z&ske=2025-08-27T02%3A27%3A56Z&sks=b&skv=2024-08-04&sig=SnN3SH4Q3B5xNKiF9YAkQx930nO0vMdLla4kII0PWc0%3D"
+                      src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756231162/ChatGPT_Image_Aug_26_2025_10_23_26_PM_yxhbkw.png"
                       alt="Relax" 
                       className="relax-illustration w-full h-full object-cover"
                     />
@@ -1082,7 +1082,7 @@ export const Dashboard: React.FC = () => {
                   <h3 className="text-xl font-semibold">Sleep</h3>
                   <div className="focus-card-image">
                     <img 
-                      src="https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-ee8c-61fa-ac54-ffb4eb2a875e/raw?se=2025-08-26T10%3A42%3A51Z&sp=r&sv=2024-08-04&sr=b&scid=2923de44-83d3-5b20-8bcc-07c109c2fcc6&skoid=5c72dd08-68ae-4091-b4e1-40ccec0693ae&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-08-26T02%3A26%3A27Z&ske=2025-08-27T02%3A26%3A27Z&sks=b&skv=2024-08-04&sig=GZpSKyH7fY8ggvQOzGCs1JY8/Vy3BivREyiGRVV5ggc%3D"
+                      src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756231163/ChatGPT_Image_Aug_26_2025_10_23_22_PM_kdp07f.png"
                       alt="Sleep" 
                       className="sleep-illustration w-full h-full object-cover"
                     />
@@ -1102,7 +1102,7 @@ export const Dashboard: React.FC = () => {
                   <h3 className="text-xl font-semibold">Meditate</h3>
                   <div className="focus-card-image">
                     <img 
-                      src="https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-774c-620a-acb4-ab4d11917b3a/raw?se=2025-08-26T10%3A42%3A51Z&sp=r&sv=2024-08-04&sr=b&scid=45d35200-65dd-5367-88b2-78130612dc4a&skoid=5c72dd08-68ae-4091-b4e1-40ccec0693ae&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-08-26T09%3A40%3A04Z&ske=2025-08-27T09%3A40%3A04Z&sks=b&skv=2024-08-04&sig=EvaGrAVOhyR3fKYJzhvRb2YleTHCsBAzVCZWaP/778I%3D"
+                      src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756231167/ChatGPT_Image_Aug_26_2025_10_23_05_PM_rdwbvy.png"
                       alt="Meditate" 
                       className="meditate-illustration w-full h-full object-cover"
                     />
