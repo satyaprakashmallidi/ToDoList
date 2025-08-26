@@ -4,6 +4,125 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Focus Music Player Styles - Brain.fm Clone */
+.focus-grid-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    padding: 0;
+    background: #fff;
+}
+
+.focus-grid-item .focus-card {
+    position: relative;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.focus-grid-item .focus-card:hover {
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.focus-grid-item .focus-card:hover .focus-card-image img {
+    transform: scale(1.1);
+}
+
+.focus-grid-item .focus-card .focus-card-image img {
+    transition: transform 0.4s ease;
+}
+
+.focus-grid-item .focus-card h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #333;
+    margin: 0;
+    flex: 1;
+}
+
+.focus-grid-item .focus-card .focus-card-image {
+    width: 150px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 20px;
+    flex-shrink: 0;
+}
+
+.focus-illustration, .relax-illustration, .sleep-illustration, .meditate-illustration {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.9;
+    border-radius: 8px;
+}
+
+.focus-grid-item .focus-card .play-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    color: white;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #3b82f6;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #3b82f6;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+@media (max-width: 600px) {
+    .focus-grid-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .focus-grid-item .focus-card {
+        height: 100px;
+        padding: 0 15px;
+    }
+    
+    .focus-grid-item .focus-card .focus-card-icon {
+        width: 50px;
+        height: 50px;
+        font-size: 2rem;
+        margin-right: 15px;
+    }
+    
+    .focus-grid-item .focus-card h3 {
+        font-size: 16px;
+    }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -130,6 +249,83 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+}
+
+/* Jump Back In Animation Styles */
+.jump-back-enter {
+  opacity: 0;
+  transform: translateY(-20px);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.jump-back-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.jump-back-exit {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.jump-back-exit-active {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+/* Enhanced Jump Back Button Styles */
+.jump-back {
+  display: flex;
+  justify-content: center;
+  margin-top: 40px;
+}
+
+/* Back Button Styles */
+.music-back-button {
+  position: relative;
+  z-index: 20;
+  padding: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+}
+
+.music-back-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+
+.music-back-button:active {
+  transform: scale(0.95);
+}
+
+.jump-btn {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 999px;
+  padding: 12px 28px;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+  transition: transform 0.25s cubic-bezier(.2,.9,.2,1),
+              box-shadow 0.25s ease,
+              border-color 0.25s ease;
+}
+
+.jump-btn:hover {
+  transform: translateY(-3px) scale(1.04);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.12);
+  border-color: transparent;
+}
+
+.jump-btn:active {
+  transform: scale(0.97);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.16);
 }
 
 /* Custom scrollbar styles */
