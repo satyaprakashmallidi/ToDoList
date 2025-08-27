@@ -402,6 +402,13 @@ export const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [isPlaying]);
 
+  // Helper function to get week number
+  const getWeekNumber = (date) => {
+    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
+    const pastDaysOfYear = (date - firstDayOfYear) / 86400000;
+    return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  };
+
   // Real-time weekly streak calculation with debugging
   useEffect(() => {
     const calculateWeekStreak = () => {
@@ -424,41 +431,64 @@ export const Dashboard: React.FC = () => {
         currentTime 
       });
       
-      // Real-time streak calculation based on current activity
-      let weekStreak = 0;
+      // Proper weekly streak calculation
+      const now = new Date();
+      const currentWeek = getWeekNumber(now);
+      const currentYear = now.getFullYear();
+      const weekKey = `${currentYear}-W${currentWeek}`;
       
-      // If timer is currently running, start from 1
-      if (isCurrentlyActive) {
-        weekStreak = 1;
-        // Add bonus for continuous activity
-        if (currentTime > 60) weekStreak += Math.floor(currentTime / 300); // +1 every 5 minutes
+      // Get stored weekly data
+      const weeklyData = JSON.parse(localStorage.getItem('weeklyActivityData') || '{}');
+      const lastStreakUpdate = localStorage.getItem('lastStreakUpdate');
+      const storedStreak = parseInt(localStorage.getItem('weeklyStreak') || '0');
+      
+      // Update current week's activity
+      const weeklyTarget = 120; // 2 hours minimum per week
+      const currentWeekActive = weekMinutes >= weeklyTarget || todayMinutes >= 30 || isCurrentlyActive;
+      
+      if (currentWeekActive) {
+        weeklyData[weekKey] = true;
+        localStorage.setItem('weeklyActivityData', JSON.stringify(weeklyData));
       }
       
-      // Add streak for accumulated weekly minutes
-      if (weekMinutes > 0) {
-        weekStreak += Math.floor(weekMinutes / 30); // +1 every 30 minutes this week
+      // Calculate consecutive weeks
+      let consecutiveWeeks = 0;
+      let checkWeek = currentWeek;
+      let checkYear = currentYear;
+      
+      // Count consecutive weeks going backwards
+      for (let i = 0; i < 52; i++) { // Max 1 year check
+        const checkKey = `${checkYear}-W${checkWeek}`;
+        if (weeklyData[checkKey]) {
+          consecutiveWeeks++;
+        } else {
+          break;
+        }
+        
+        // Go to previous week
+        checkWeek--;
+        if (checkWeek < 1) {
+          checkWeek = 52;
+          checkYear--;
+        }
       }
       
-      // Dynamic weekly adjustments
-      const weeklyTarget = 300; // 5 hours per week target
-      const weekProgress = weekMinutes / weeklyTarget;
+      // Real-time bonuses for current activity
+      let weekStreak = consecutiveWeeks;
+      if (isCurrentlyActive && currentTime > 60) {
+        weekStreak += 1; // Bonus for active session
+      }
+      if (todayMinutes > 60) {
+        weekStreak += 1; // Bonus for significant daily activity
+      }
       
-      if (weekProgress > 1.5) weekStreak += 6; // Excellent week
-      else if (weekProgress > 1.2) weekStreak += 4; // Great week
-      else if (weekProgress > 1.0) weekStreak += 3; // Good week
-      else if (weekProgress > 0.8) weekStreak += 2; // Okay week
-      else if (weekProgress > 0.5) weekStreak += 1; // Some progress
-      else weekStreak += 0; // Below target
+      const finalStreak = Math.max(consecutiveWeeks, weekStreak);
       
-      // Real-time bonuses for current session
-      if (isCurrentlyActive) weekStreak += 2;
-      if (todayMinutes > 60) weekStreak += 2;
-      if (todayMinutes > 30) weekStreak += 1;
-      if (isPlaying && currentTime > 300) weekStreak += 3; // 5+ min session
-      if (isPlaying && currentTime > 60) weekStreak += 1; // 1+ min session
+      // Save the streak
+      localStorage.setItem('weeklyStreak', finalStreak.toString());
+      localStorage.setItem('lastStreakUpdate', now.toISOString());
       
-      const finalStreak = Math.max(1, weekStreak);
-      console.log('Final streak:', finalStreak);
+      console.log('Final streak:', finalStreak, 'Consecutive weeks:', consecutiveWeeks);
       return finalStreak;
     };
     
@@ -1523,8 +1553,8 @@ export const Dashboard: React.FC = () => {
 
                 {/* Bottom Left - Album Art & Track Info */}
                 <div className="absolute bottom-4 left-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-14 h-14 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-lg overflow-hidden">
                       <div className="w-full h-full bg-gradient-to-br from-blue-500 via-purple-600 to-pink-500 flex items-center justify-center">
                         <div className="text-white text-xs font-bold">
                           {selectedMusicMode === 'focus' ? 'BL' : 
@@ -1534,13 +1564,13 @@ export const Dashboard: React.FC = () => {
                       </div>
                     </div>
                     <div className="text-white">
-                      <h4 className="font-semibold text-sm">
+                      <h4 className="font-medium text-xs">
                         {selectedMusicMode === 'focus' ? 'Black Lights' : 
                          selectedMusicMode === 'relax' ? 'Returning Purpose' : 
                          selectedMusicMode === 'sleep' ? 'Deep Sleep' : 'Meditation Glow'}
                       </h4>
-                      <div className="flex items-center gap-2 text-xs text-gray-300 mt-1">
-                        <span className="bg-white bg-opacity-20 px-2 py-0.5 rounded">Low Neural Effect</span>
+                      <div className="flex items-center gap-1 text-xs text-gray-300 mt-0.5">
+                        <span className="bg-white bg-opacity-20 px-1.5 py-0.5 rounded text-xs">Low Neural Effect</span>
                         <span>ELECTRONIC</span>
                         <span>DETAILS</span>
                       </div>
