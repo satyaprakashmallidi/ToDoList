@@ -31,11 +31,13 @@ export const Dashboard: React.FC = () => {
   const [jumpBackAnimated, setJumpBackAnimated] = useState(false);
   const [showMusicPlayer, setShowMusicPlayer] = useState(false);
   const [selectedMusicMode, setSelectedMusicMode] = useState<'focus' | 'relax' | 'sleep' | 'meditate' | null>(null);
+  const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [selectedActivity, setSelectedActivity] = useState<string | null>(null);
   const [selectedTimer, setSelectedTimer] = useState('Infinity');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [showTimerSettings, setShowTimerSettings] = useState(false);
+  const [showInlineTimerSettings, setShowInlineTimerSettings] = useState(false);
   const [timerMode, setTimerMode] = useState<'infinite' | 'timer'>('infinite');
   const [customTimer, setCustomTimer] = useState({ hours: 0, minutes: 30 });
   const [volume, setVolume] = useState(70);
@@ -112,6 +114,74 @@ export const Dashboard: React.FC = () => {
           <circle cx="10" cy="10" r="2"/>
         </svg>
       ) }
+    ]
+  };
+
+  // Songs playlist data structure
+  const songsPlaylist = {
+    focus: [
+      { 
+        title: 'Black Lights', 
+        artist: 'Brian Eno', 
+        initials: 'BL', 
+        effect: 'Low Neural Effect',
+        genre: 'ELECTRONIC',
+        gradient: 'from-blue-500 via-purple-600 to-pink-500'
+      },
+      { 
+        title: 'Deep Focus', 
+        artist: 'Max Richter', 
+        initials: 'DF', 
+        effect: 'Medium Neural Effect',
+        genre: 'AMBIENT',
+        gradient: 'from-indigo-500 via-blue-600 to-purple-500'
+      },
+      { 
+        title: 'Flow State', 
+        artist: 'Ólafur Arnalds', 
+        initials: 'FS', 
+        effect: 'High Neural Effect',
+        genre: 'NEO-CLASSICAL',
+        gradient: 'from-cyan-500 via-teal-600 to-blue-500'
+      }
+    ],
+    relax: [
+      { 
+        title: 'Returning Purpose', 
+        artist: 'Nils Frahm', 
+        initials: 'RP', 
+        effect: 'Relaxing',
+        genre: 'AMBIENT',
+        gradient: 'from-green-500 via-emerald-600 to-teal-500'
+      },
+      { 
+        title: 'Peaceful Mind', 
+        artist: 'Kiasmos', 
+        initials: 'PM', 
+        effect: 'Calming',
+        genre: 'ELECTRONIC',
+        gradient: 'from-teal-500 via-cyan-600 to-blue-500'
+      }
+    ],
+    sleep: [
+      { 
+        title: 'Deep Sleep', 
+        artist: 'Tim Hecker', 
+        initials: 'DS', 
+        effect: 'Sleep Inducing',
+        genre: 'DRONE',
+        gradient: 'from-purple-500 via-indigo-600 to-blue-500'
+      }
+    ],
+    meditate: [
+      { 
+        title: 'Meditation Glow', 
+        artist: 'Laraaji', 
+        initials: 'MG', 
+        effect: 'Meditative',
+        genre: 'AMBIENT',
+        gradient: 'from-orange-500 via-yellow-600 to-amber-500'
+      }
     ]
   };
   
@@ -507,6 +577,159 @@ export const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [user?.id, getWeekMinutes, getTodayMinutes, isRunning, isPlaying, currentTime]);
 
+  // Advanced system volume detection and sync
+  useEffect(() => {
+    let audioContext = null;
+    let analyser = null;
+    let microphone = null;
+    let volumeCheckInterval = null;
+    let testAudioElement = null;
+    let lastKnownVolume = volume;
+    
+    const initAdvancedVolumeSync = async () => {
+      try {
+        // Method 1: Test audio element approach
+        testAudioElement = document.createElement('audio');
+        testAudioElement.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+PyxmgfCSubyvLGdSEDMYHO8uaBMQYYaLjov15NFgtWq+Puwl8fCDOAzvLZdSUFY3Q8ZnhDCgZFbz5oZTsC';
+        testAudioElement.volume = volume / 100;
+        testAudioElement.loop = true;
+        testAudioElement.muted = true;
+        testAudioElement.style.display = 'none';
+        document.body.appendChild(testAudioElement);
+        
+        // Method 2: Audio Context with getUserMedia (for system audio detection)
+        try {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            } 
+          });
+          microphone = audioContext.createMediaStreamSource(stream);
+          analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          microphone.connect(analyser);
+          
+          console.log('Audio context initialized for system volume detection');
+        } catch (micError) {
+          console.warn('Microphone access denied, using fallback method');
+        }
+        
+        // Disable automatic monitoring to prevent glitches
+        // Only use keyboard detection for now
+        console.log('Volume detection initialized - keyboard only mode');
+        
+      } catch (error) {
+        console.warn('Advanced volume sync failed:', error);
+      }
+    };
+    
+    // Enhanced keyboard event detection
+    const handleKeyboardEvents = (event) => {
+      // Only log actual volume key detections (reduced spam)
+      if (
+        (event.key && (event.key.includes('Volume') || event.key.includes('Audio'))) ||
+        (event.code && (event.code.includes('F10') || event.code.includes('F11') || event.code.includes('F12'))) ||
+        [121, 122, 123, 173, 174, 175].includes(event.keyCode)
+      ) {
+        // Only log once per key type to reduce spam
+        if (!window.volumeKeyLogged || window.volumeKeyLogged !== event.code) {
+          console.log('🔊 VOLUME KEY:', event.key || event.code || event.keyCode);
+          window.volumeKeyLogged = event.code;
+          setTimeout(() => { window.volumeKeyLogged = null; }, 1000);
+        }
+      }
+      
+      let newVolume = volume;
+      let volumeChanged = false;
+      
+      // Multiple ways to detect volume keys
+      if (
+        event.key === 'AudioVolumeUp' || 
+        event.code === 'AudioVolumeUp' || 
+        event.code === 'VolumeUp' ||
+        event.code === 'F12' || // macOS volume up
+        event.keyCode === 175 ||
+        event.keyCode === 123 || // F12 keyCode
+        (event.altKey && event.keyCode === 38) // Alt + Up Arrow
+      ) {
+        newVolume = Math.min(100, volume + 5);
+        volumeChanged = true;
+        console.log('🔊 Volume up detected via:', event.key || event.code || event.keyCode);
+      } else if (
+        event.key === 'AudioVolumeDown' || 
+        event.code === 'AudioVolumeDown' || 
+        event.code === 'VolumeDown' ||
+        event.code === 'F11' || // macOS volume down
+        event.keyCode === 174 ||
+        event.keyCode === 122 || // F11 keyCode
+        (event.altKey && event.keyCode === 40) // Alt + Down Arrow
+      ) {
+        newVolume = Math.max(0, volume - 5);
+        volumeChanged = true;
+        console.log('🔊 Volume down detected via:', event.key || event.code || event.keyCode);
+      } else if (
+        event.key === 'AudioVolumeMute' || 
+        event.code === 'AudioVolumeMute' || 
+        event.code === 'VolumeMute' ||
+        event.code === 'F10' || // macOS mute
+        event.keyCode === 173 ||
+        event.keyCode === 121 || // F10 keyCode
+        (event.altKey && event.keyCode === 77) // Alt + M
+      ) {
+        newVolume = volume > 0 ? 0 : 75;
+        volumeChanged = true;
+        console.log('🔊 Volume mute detected via:', event.key || event.code || event.keyCode);
+      }
+      
+      if (volumeChanged) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        console.log('Setting volume via keyboard:', newVolume);
+        setVolume(newVolume);
+        lastKnownVolume = newVolume;
+        
+        // Update focus player
+        if (window.focusPlayer && window.focusPlayer.updateVolume) {
+          window.focusPlayer.updateVolume(newVolume);
+        }
+        
+        // Update test audio element
+        if (testAudioElement) {
+          testAudioElement.volume = newVolume / 100;
+        }
+      }
+    };
+    
+    // Initialize advanced volume sync
+    initAdvancedVolumeSync();
+    
+    // Add comprehensive event listeners
+    document.addEventListener('keydown', handleKeyboardEvents, true);
+    window.addEventListener('keydown', handleKeyboardEvents, true);
+    
+    return () => {
+      // Clean up only what we actually use
+      if (microphone) {
+        microphone.disconnect();
+      }
+      if (audioContext) {
+        audioContext.close();
+      }
+      if (testAudioElement && document.body.contains(testAudioElement)) {
+        document.body.removeChild(testAudioElement);
+      }
+      document.removeEventListener('keydown', handleKeyboardEvents, true);
+      window.removeEventListener('keydown', handleKeyboardEvents, true);
+      
+      // Clear the logging flag
+      window.volumeKeyLogged = null;
+    };
+  }, []); // Only run once on mount
+
   // Volume drag functionality
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -560,6 +783,32 @@ export const Dashboard: React.FC = () => {
       }
     }
   }, [isPlaying, volume]);
+
+  // Song navigation functions
+  const getCurrentSong = () => {
+    if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) {
+      return null;
+    }
+    const playlist = songsPlaylist[selectedMusicMode];
+    return playlist[currentSongIndex] || playlist[0];
+  };
+
+  const nextSong = () => {
+    if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) return;
+    const playlist = songsPlaylist[selectedMusicMode];
+    setCurrentSongIndex((prevIndex) => (prevIndex + 1) % playlist.length);
+  };
+
+  const previousSong = () => {
+    if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) return;
+    const playlist = songsPlaylist[selectedMusicMode];
+    setCurrentSongIndex((prevIndex) => (prevIndex - 1 + playlist.length) % playlist.length);
+  };
+
+  // Reset song index when music mode changes
+  useEffect(() => {
+    setCurrentSongIndex(0);
+  }, [selectedMusicMode]);
 
   // Jump back animation effect
   useEffect(() => {
@@ -1343,7 +1592,7 @@ export const Dashboard: React.FC = () => {
             ) : showMusicPlayer ? (
               /* Modern Music Player View */
               <div 
-                className={`relative w-full h-[450px] rounded-xl overflow-hidden ${
+                className={`relative w-full h-[580px] rounded-xl overflow-hidden ${
                   selectedMusicMode === 'focus' 
                     ? 'bg-gradient-to-br from-purple-600 via-pink-600 to-purple-800'
                     : selectedMusicMode === 'relax'
@@ -1355,6 +1604,10 @@ export const Dashboard: React.FC = () => {
               >
                 {/* Dark overlay */}
                 <div className="absolute inset-0 bg-black bg-opacity-70"></div>
+
+                {!showInlineTimerSettings ? (
+                  // Music Player View
+                  <>
                 
                 {/* Top Header */}
                 <div className="absolute top-4 left-4 right-4 flex items-center justify-between text-white">
@@ -1495,7 +1748,7 @@ export const Dashboard: React.FC = () => {
                   
                   {/* Infinite Play Dropdown */}
                   <button
-                    onClick={() => setShowTimerSettings(true)}
+                    onClick={() => setShowInlineTimerSettings(true)}
                     title="Click to toggle timer settings"
                     className="flex items-center gap-2 px-5 py-2 bg-black bg-opacity-40 rounded-full text-sm hover:bg-opacity-60 transition-all border border-white border-opacity-20 mb-8"
                     onMouseEnter={() => setIsTimerHovered(true)}
@@ -1510,7 +1763,10 @@ export const Dashboard: React.FC = () => {
                   
                   {/* Playback Controls */}
                   <div className="flex items-center gap-8">
-                    <button className="p-3 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors">
+                    <button 
+                      onClick={previousSong}
+                      className="p-3 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors"
+                    >
                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                       </svg>
@@ -1543,7 +1799,10 @@ export const Dashboard: React.FC = () => {
                       )}
                     </button>
                     
-                    <button className="p-3 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors">
+                    <button 
+                      onClick={nextSong}
+                      className="p-3 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors"
+                    >
                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
@@ -1555,23 +1814,19 @@ export const Dashboard: React.FC = () => {
                 <div className="absolute bottom-4 left-4">
                   <div className="flex items-center gap-2">
                     <div className="w-10 h-10 rounded-lg overflow-hidden">
-                      <div className="w-full h-full bg-gradient-to-br from-blue-500 via-purple-600 to-pink-500 flex items-center justify-center">
+                      <div className={`w-full h-full bg-gradient-to-br ${getCurrentSong()?.gradient || 'from-blue-500 via-purple-600 to-pink-500'} flex items-center justify-center`}>
                         <div className="text-white text-xs font-bold">
-                          {selectedMusicMode === 'focus' ? 'BL' : 
-                           selectedMusicMode === 'relax' ? 'RP' : 
-                           selectedMusicMode === 'sleep' ? 'DS' : 'MG'}
+                          {getCurrentSong()?.initials || 'BL'}
                         </div>
                       </div>
                     </div>
                     <div className="text-white">
                       <h4 className="font-medium text-xs">
-                        {selectedMusicMode === 'focus' ? 'Black Lights' : 
-                         selectedMusicMode === 'relax' ? 'Returning Purpose' : 
-                         selectedMusicMode === 'sleep' ? 'Deep Sleep' : 'Meditation Glow'}
+                        {getCurrentSong()?.title || 'Black Lights'}
                       </h4>
                       <div className="flex items-center gap-1 text-xs text-gray-300 mt-0.5">
-                        <span className="bg-white bg-opacity-20 px-1.5 py-0.5 rounded text-xs">Low Neural Effect</span>
-                        <span>ELECTRONIC</span>
+                        <span className="bg-white bg-opacity-20 px-1.5 py-0.5 rounded text-xs">{getCurrentSong()?.effect || 'Low Neural Effect'}</span>
+                        <span>{getCurrentSong()?.genre || 'ELECTRONIC'}</span>
                         <span>DETAILS</span>
                       </div>
                     </div>
@@ -1634,6 +1889,138 @@ export const Dashboard: React.FC = () => {
                     `}</style>
                   </div>
                 </div>
+
+                  </>
+                ) : (
+                  // Timer Settings View
+                  <div className="absolute inset-0 flex flex-col justify-center items-center text-white p-8">
+                    {/* Glass overlay */}
+                    <div className="absolute inset-0 backdrop-blur-md bg-white/10"></div>
+                    
+                    {/* Timer Settings Content */}
+                    <div className="relative z-10 w-full max-w-md">
+                      {/* Header */}
+                      <div className="text-center mb-8">
+                        <h2 className="text-2xl font-semibold mb-2">Timer Settings</h2>
+                        <p className="text-gray-300 text-sm">Configure your focus session duration</p>
+                      </div>
+
+                      {/* Timer Type Selection */}
+                      <div className="flex gap-3 mb-8">
+                        <button
+                          onClick={() => setTimerMode('infinite')}
+                          className={`flex-1 px-4 py-4 rounded-xl border-2 transition-all backdrop-blur-sm ${
+                            timerMode === 'infinite' 
+                              ? 'border-white/60 bg-white/20' 
+                              : 'border-white/30 bg-white/10 hover:border-white/40'
+                          }`}
+                        >
+                          <div className="text-center">
+                            <div className="text-3xl mb-2">∞</div>
+                            <div className="text-sm font-medium">INFINITE</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => setTimerMode('timer')}
+                          className={`flex-1 px-4 py-4 rounded-xl border-2 transition-all backdrop-blur-sm ${
+                            timerMode === 'timer' 
+                              ? 'border-white/60 bg-white/20' 
+                              : 'border-white/30 bg-white/10 hover:border-white/40'
+                          }`}
+                        >
+                          <div className="text-center">
+                            <div className="text-3xl mb-2">⏱</div>
+                            <div className="text-sm font-medium">TIMER</div>
+                          </div>
+                        </button>
+                      </div>
+
+                      {timerMode === 'infinite' ? (
+                        <div className="text-center mb-8">
+                          <h3 className="text-xl font-semibold mb-3">Infinite Play</h3>
+                          <p className="text-gray-300 text-sm mb-6">Listen to tracks freely without any time restrictions.</p>
+                          
+                          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium">Activate Quotes</span>
+                              <button
+                                className={`w-12 h-6 rounded-full transition-colors ${
+                                  true ? 'bg-white' : 'bg-gray-600'
+                                } relative`}
+                              >
+                                <div className={`w-5 h-5 bg-gray-900 rounded-full absolute top-0.5 transition-transform ${
+                                  true ? 'translate-x-6' : 'translate-x-0.5'
+                                }`}></div>
+                              </button>
+                            </div>
+                            <p className="text-xs text-gray-300 mt-2 text-left">Quotes replace the timer display.</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center mb-8">
+                          <h3 className="text-xl font-semibold mb-3">Set Timer</h3>
+                          <p className="text-gray-300 text-sm mb-6">Select when you'd like the music to stop playing.</p>
+                          
+                          <div className="grid grid-cols-3 gap-3 mb-6">
+                            {[
+                              { label: '30 min', minutes: 30 },
+                              { label: '1 hr', minutes: 60 },
+                              { label: '2 hrs', minutes: 120 }
+                            ].map((preset) => (
+                              <button
+                                key={preset.minutes}
+                                onClick={() => setCustomTimer({ hours: Math.floor(preset.minutes / 60), minutes: preset.minutes % 60 })}
+                                className="px-3 py-3 border border-white/30 bg-white/10 backdrop-blur-sm rounded-xl hover:border-white/40 transition-all text-sm font-medium"
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                          </div>
+                          
+                          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+                            <div className="flex items-center gap-3 justify-center">
+                              <span className="text-gray-300 text-sm">Custom</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="23"
+                                value={customTimer.hours}
+                                onChange={(e) => setCustomTimer(prev => ({ ...prev, hours: parseInt(e.target.value) || 0 }))}
+                                className="w-16 px-2 py-2 bg-white/20 backdrop-blur-sm border border-white/30 rounded-lg text-center text-white placeholder-gray-300 focus:outline-none focus:border-white/50"
+                              />
+                              <span className="text-gray-300 text-sm">hrs</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="59"
+                                value={customTimer.minutes}
+                                onChange={(e) => setCustomTimer(prev => ({ ...prev, minutes: parseInt(e.target.value) || 0 }))}
+                                className="w-16 px-2 py-2 bg-white/20 backdrop-blur-sm border border-white/30 rounded-lg text-center text-white placeholder-gray-300 focus:outline-none focus:border-white/50"
+                              />
+                              <span className="text-gray-300 text-sm">mins</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Footer Buttons */}
+                      <div className="flex gap-4">
+                        <button
+                          onClick={() => setShowInlineTimerSettings(false)}
+                          className="flex-1 px-6 py-3 text-white/80 hover:text-white transition-colors font-medium"
+                        >
+                          CANCEL
+                        </button>
+                        <button
+                          onClick={() => setShowInlineTimerSettings(false)}
+                          className="flex-1 px-6 py-3 bg-white text-gray-900 rounded-full font-semibold hover:bg-gray-100 transition-colors"
+                        >
+                          APPLY
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               /* Activity Selection View */
