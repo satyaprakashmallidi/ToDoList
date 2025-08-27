@@ -38,19 +38,53 @@ export const Dashboard: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [showTimerSettings, setShowTimerSettings] = useState(false);
   const [showInlineTimerSettings, setShowInlineTimerSettings] = useState(false);
+  const [showPlayerSettings, setShowPlayerSettings] = useState(false);
+  const [selectedGenres, setSelectedGenres] = useState({
+    // Music genres
+    acoustic: true,
+    atmospheric: false,
+    cinematic: false,
+    classical: true,
+    drone: false,
+    electronic: true,
+    grooves: true,
+    lofi: false,
+    piano: false,
+    postrock: false,
+    // Nature genres
+    beach: false,
+    chimes: false,
+    forest: false,
+    nightsounds: false,
+    rain: false,
+    rainforest: false,
+    river: false,
+    thunder: true,
+    underwater: false,
+    wind: false
+  });
+  const [neuralEffectLevel, setNeuralEffectLevel] = useState('low');
+  const [appliedGenres, setAppliedGenres] = useState<string[]>([]);
+  const [appliedNeuralEffect, setAppliedNeuralEffect] = useState('low');
+  const [recentSessions, setRecentSessions] = useState<{
+    mode: string;
+    activity: string;
+    color: string;
+    startTime: Date;
+    timestamp: Date;
+  }[]>([]);
+  const [recentTracks, setRecentTracks] = useState<{
+    title: string;
+    artist: string;
+    genre: string;
+    mode: string;
+    timestamp: Date;
+  }[]>([]);
   const [timerMode, setTimerMode] = useState<'infinite' | 'timer'>('infinite');
   const [customTimer, setCustomTimer] = useState({ hours: 0, minutes: 30 });
   const [volume, setVolume] = useState(70);
   const [realTimeStreak, setRealTimeStreak] = useState(0);
   const [isDraggingVolume, setIsDraggingVolume] = useState(false);
-  const [recentSessions, setRecentSessions] = useState([
-    { mode: 'relax', activity: 'Custom Relax Mix', time: '30 mins', color: 'bg-blue-500' },
-    { mode: 'sleep', activity: 'Unguided', time: '45 mins', color: 'bg-green-500' },
-    { mode: 'sleep', activity: 'Recharge', time: '20 mins', color: 'bg-blue-500' },
-    { mode: 'focus', activity: 'Deep Work', time: '60 mins', color: 'bg-red-500' },
-    { mode: 'sleep', activity: 'Deep Sleep', time: '8 hrs', color: 'bg-purple-500' },
-    { mode: 'focus', activity: 'Custom Focus Mix', time: '90 mins', color: 'bg-red-500' }
-  ]);
 
   // Focus dropdown state and options
   const [showFocusDropdown, setShowFocusDropdown] = useState(false);
@@ -143,6 +177,30 @@ export const Dashboard: React.FC = () => {
         effect: 'High Neural Effect',
         genre: 'NEO-CLASSICAL',
         gradient: 'from-cyan-500 via-teal-600 to-blue-500'
+      },
+      { 
+        title: 'Acoustic Dreams', 
+        artist: 'José González', 
+        initials: 'AD', 
+        effect: 'Medium Neural Effect',
+        genre: 'ACOUSTIC',
+        gradient: 'from-amber-500 via-orange-600 to-red-500'
+      },
+      { 
+        title: 'Thunder & Rain', 
+        artist: 'Nature Sounds', 
+        initials: 'TR', 
+        effect: 'Low Neural Effect',
+        genre: 'NATURE',
+        gradient: 'from-gray-500 via-slate-600 to-blue-500'
+      },
+      { 
+        title: 'Cinematic Journey', 
+        artist: 'Hans Zimmer', 
+        initials: 'CJ', 
+        effect: 'High Neural Effect',
+        genre: 'CINEMATIC',
+        gradient: 'from-purple-500 via-indigo-600 to-blue-500'
       }
     ],
     relax: [
@@ -188,6 +246,111 @@ export const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const { supabase } = useSupabase();
   const navigate = useNavigate();
+
+  // Function to get filtered songs based on applied genres and neural effect
+  // Function to add recent session
+  const addRecentSession = (mode: string, activity: string) => {
+    const colors = ['bg-red-500', 'bg-pink-500', 'bg-blue-500', 'bg-purple-500', 'bg-green-500'];
+    const now = new Date();
+    const newSession = {
+      mode: 'Infinity',
+      activity,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      startTime: now,
+      timestamp: now
+    };
+    
+    setRecentSessions(prev => [newSession, ...prev.slice(0, 5)]); // Keep only 6 most recent
+  };
+
+  // Function to calculate elapsed time from session start
+  const getElapsedTime = (startTime: Date) => {
+    const now = realTime; // Use realTime state to trigger updates
+    const elapsed = Math.floor((now.getTime() - startTime.getTime()) / 1000 / 60); // minutes
+    return Math.max(0, elapsed); // Ensure non-negative values
+  };
+
+  // Function to format elapsed time
+  const formatElapsedTime = (minutes: number) => {
+    if (minutes < 60) {
+      return `${minutes} min`;
+    } else {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${hours}h ${mins}m`;
+    }
+  };
+
+  // State to trigger re-renders for real-time updates
+  const [realTime, setRealTime] = useState(new Date());
+
+  // Update real time every minute for real-time session duration display
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRealTime(new Date());
+    }, 60000); // Update every minute
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Function to add recent track
+  const addRecentTrack = (song: any, mode: string) => {
+    const newTrack = {
+      title: song.title,
+      artist: song.artist,
+      genre: song.genre,
+      mode: mode.charAt(0).toUpperCase() + mode.slice(1),
+      timestamp: new Date()
+    };
+    
+    setRecentTracks(prev => {
+      // Remove if already exists to avoid duplicates
+      const filtered = prev.filter(track => track.title !== song.title);
+      return [newTrack, ...filtered.slice(0, 3)]; // Keep only 4 most recent
+    });
+  };
+
+  const getFilteredSongs = (mode: 'focus' | 'relax' | 'sleep' | 'meditate') => {
+    let songs = songsPlaylist[mode] || [];
+    
+    // If no genres are applied, return all songs
+    if (appliedGenres.length === 0) return songs;
+    
+    // Map our genre keys to song genre strings
+    const genreMapping: { [key: string]: string[] } = {
+      acoustic: ['ACOUSTIC'],
+      atmospheric: ['ATMOSPHERIC', 'AMBIENT'],
+      cinematic: ['CINEMATIC'],
+      classical: ['CLASSICAL', 'NEO-CLASSICAL'],
+      drone: ['DRONE'],
+      electronic: ['ELECTRONIC'],
+      grooves: ['GROOVES'],
+      lofi: ['LOFI'],
+      piano: ['PIANO'],
+      postrock: ['POST-ROCK'],
+      // Nature sounds would typically be separate tracks, but for demo purposes
+      beach: ['NATURE', 'AMBIENT'],
+      chimes: ['NATURE', 'MEDITATION'],
+      forest: ['NATURE', 'AMBIENT'],
+      nightsounds: ['NATURE', 'SLEEP'],
+      rain: ['NATURE', 'AMBIENT'],
+      rainforest: ['NATURE', 'AMBIENT'],
+      river: ['NATURE', 'AMBIENT'],
+      thunder: ['NATURE', 'ATMOSPHERIC'],
+      underwater: ['NATURE', 'AMBIENT'],
+      wind: ['NATURE', 'ATMOSPHERIC']
+    };
+    
+    // Get all allowed genres based on selected preferences
+    const allowedGenres = appliedGenres.flatMap(genre => genreMapping[genre] || []);
+    
+    // Filter songs that match the selected genres
+    return songs.filter(song => 
+      allowedGenres.some(genre => 
+        song.genre.toUpperCase().includes(genre.toUpperCase())
+      )
+    );
+  };
   const { 
     isRunning, 
     isPaused, 
@@ -789,19 +952,22 @@ export const Dashboard: React.FC = () => {
     if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) {
       return null;
     }
-    const playlist = songsPlaylist[selectedMusicMode];
+    // Use filtered songs if genres are applied, otherwise use full playlist
+    const playlist = appliedGenres.length > 0 ? getFilteredSongs(selectedMusicMode) : songsPlaylist[selectedMusicMode];
     return playlist[currentSongIndex] || playlist[0];
   };
 
   const nextSong = () => {
     if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) return;
-    const playlist = songsPlaylist[selectedMusicMode];
+    // Use filtered songs if genres are applied, otherwise use full playlist
+    const playlist = appliedGenres.length > 0 ? getFilteredSongs(selectedMusicMode) : songsPlaylist[selectedMusicMode];
     setCurrentSongIndex((prevIndex) => (prevIndex + 1) % playlist.length);
   };
 
   const previousSong = () => {
     if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) return;
-    const playlist = songsPlaylist[selectedMusicMode];
+    // Use filtered songs if genres are applied, otherwise use full playlist
+    const playlist = appliedGenres.length > 0 ? getFilteredSongs(selectedMusicMode) : songsPlaylist[selectedMusicMode];
     setCurrentSongIndex((prevIndex) => (prevIndex - 1 + playlist.length) % playlist.length);
   };
 
@@ -1406,6 +1572,7 @@ export const Dashboard: React.FC = () => {
                 <div className="focus-card" data-mode="focus" onClick={() => {
                   setSelectedMusicMode('focus');
                   setShowMusicPlayer(true);
+                  addRecentSession('Focus', 'Focus Session');
                   setCurrentTime(0);
                   if (window.focusPlayer) {
                     window.focusPlayer.playMode('focus');
@@ -1426,6 +1593,7 @@ export const Dashboard: React.FC = () => {
                 <div className="focus-card" data-mode="relax" onClick={() => {
                   setSelectedMusicMode('relax');
                   setShowMusicPlayer(true);
+                  addRecentSession('Relax', 'Relaxation Session');
                   setCurrentTime(0);
                   if (window.focusPlayer) {
                     window.focusPlayer.playMode('relax');
@@ -1446,6 +1614,7 @@ export const Dashboard: React.FC = () => {
                 <div className="focus-card" data-mode="sleep" onClick={() => {
                   setSelectedMusicMode('sleep');
                   setShowMusicPlayer(true);
+                  addRecentSession('Sleep', 'Sleep Session');
                   setCurrentTime(0);
                   if (window.focusPlayer) {
                     window.focusPlayer.playMode('sleep');
@@ -1466,6 +1635,7 @@ export const Dashboard: React.FC = () => {
                 <div className="focus-card" data-mode="meditate" onClick={() => {
                   setSelectedMusicMode('meditate');
                   setShowMusicPlayer(true);
+                  addRecentSession('Meditate', 'Meditation Session');
                   setCurrentTime(0);
                   if (window.focusPlayer) {
                     window.focusPlayer.playMode('meditate');
@@ -1501,95 +1671,116 @@ export const Dashboard: React.FC = () => {
                 </div>
               </>
             ) : showJumpBackView ? (
-              /* Jump Back In View */
-              <div className={`w-full max-w-4xl mx-auto transition-all duration-500 ease-in-out transform ${
-                jumpBackAnimated ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
-              }`}>
-                {/* Header */}
-                <div className="jump-back mb-6">
-                  <button
-                    onClick={() => {
-                      setJumpBackAnimated(false);
-                      setTimeout(() => setShowJumpBackView(false), 150);
-                    }}
-                    className="jump-btn flex items-center gap-2"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                    </svg>
-                    JUMP BACK IN
-                  </button>
-                </div>
-
-                {/* Recent Sessions */}
-                <div className="mb-8">
-                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Recent Sessions</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    {recentSessions.map((session, index) => (
-                      <div
-                        key={index}
-                        className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-all cursor-pointer flex items-center gap-3"
-                        onClick={() => {
-                          // Handle session click
-                          if (window.focusPlayer) {
-                            window.focusPlayer.playMode(session.mode);
-                          }
-                        }}
-                      >
-                        <div className={`w-3 h-3 rounded-full ${session.color}`}></div>
-                        <div className="flex-1">
-                          <div className="text-xs text-gray-500 capitalize mb-1">{session.mode} • {session.time}</div>
-                          <div className="text-sm font-medium text-gray-900">{session.activity}</div>
-                        </div>
-                      </div>
-                    ))}
+              /* Jump Back In View - Brain.fm Style - Contained within music div */
+              <div className="relative bg-black/40 backdrop-blur-2xl flex flex-col items-center text-white min-h-[600px] rounded-lg overflow-hidden">
+                
+                <div className={`w-full mx-auto p-6 transition-all duration-500 ease-in-out transform ${
+                  jumpBackAnimated ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
+                }`}>
+                  {/* Animated Header */}
+                  <div className="text-center mb-8">
+                    <button
+                      onClick={() => {
+                        setJumpBackAnimated(false);
+                        setTimeout(() => setShowJumpBackView(false), 150);
+                      }}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 backdrop-blur-md border border-white/20 rounded-full font-medium hover:bg-white/20 transition-all text-sm animate-bounce"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                      </svg>
+                      JUMP BACK IN
+                    </button>
                   </div>
-                </div>
 
-                {/* Recent Tracks */}
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Recent Tracks</h3>
-                  <div className="space-y-3">
-                    {recentTasks.slice(0, 4).map((task, index) => (
-                      <div
-                        key={task.id}
-                        className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-all cursor-pointer flex items-center gap-4"
-                        onClick={() => navigate('/app/tasks')}
-                      >
-                        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                          <div className="w-6 h-1 bg-white rounded-full mb-1"></div>
-                          <div className="w-8 h-1 bg-white rounded-full"></div>
+                  {/* Recent Sessions */}
+                  <div className="mb-6">
+                    <h3 className="text-sm font-medium text-white/80 uppercase tracking-wider mb-3 text-center">Recent Sessions</h3>
+                    <div className="grid grid-cols-3 gap-2 max-h-32 overflow-y-auto custom-scrollbar">
+                      {recentSessions.length === 0 ? (
+                        <div className="col-span-3 text-center py-4">
+                          <p className="text-white/60 text-sm">No recent sessions yet. Start a music session to see them here!</p>
                         </div>
-                        <div className="flex-1">
-                          <h4 className="font-medium text-gray-900 text-sm mb-1">{task.title}</h4>
-                          <p className="text-xs text-gray-500 uppercase tracking-wider">
-                            {task.status === 'completed' ? 'Completed' : 
-                             task.status === 'in_progress' ? 'In Progress' : 'Open'}
-                          </p>
+                      ) : (
+                        recentSessions.map((session, index) => (
+                        <div
+                          key={index}
+                          className="bg-white/10 backdrop-blur-md border border-white/20 rounded-lg p-3 hover:bg-white/20 transition-all cursor-pointer flex items-center gap-2"
+                          onClick={() => {
+                            setJumpBackAnimated(false);
+                            setTimeout(() => {
+                              setShowJumpBackView(false);
+                              setSelectedMusicMode('focus');
+                              setShowMusicPlayer(true);
+                            }, 150);
+                          }}
+                        >
+                          <div className={`w-2 h-2 rounded-full ${session.color}`}></div>
+                          <div className="flex-1">
+                            <div className="text-xs text-white/60 capitalize">{session.mode} • {formatElapsedTime(getElapsedTime(session.startTime))}</div>
+                            <div className="text-xs font-medium text-white">{session.activity}</div>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <button className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
-                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01" />
-                            </svg>
-                          </button>
-                          <button className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
-                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                            </svg>
-                          </button>
-                          <button className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
-                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Recent Tracks */}
+                  <div>
+                    <h3 className="text-sm font-medium text-white/80 uppercase tracking-wider mb-3 text-center">Recent Tracks</h3>
+                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                      {recentTracks.length === 0 ? (
+                        <div className="text-center py-4">
+                          <p className="text-white/60 text-sm">No recent tracks yet. Play some music to see them here!</p>
                         </div>
-                      </div>
-                    ))}
+                      ) : (
+                        recentTracks.map((track, index) => (
+                        <div
+                          key={index}
+                          className="bg-white/10 backdrop-blur-md border border-white/20 rounded-lg p-3 hover:bg-white/20 transition-all cursor-pointer flex items-center gap-3"
+                          onClick={() => {
+                            setJumpBackAnimated(false);
+                            setTimeout(() => {
+                              setShowJumpBackView(false);
+                              setSelectedMusicMode('focus');
+                              setShowMusicPlayer(true);
+                            }, 150);
+                          }}
+                        >
+                          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12 7-12 6z" />
+                            </svg>
+                          </div>
+                          <div className="flex-1">
+                            <h4 className="font-medium text-white text-sm mb-1">{track.title}</h4>
+                            <p className="text-xs text-white/60 uppercase tracking-wider">{track.artist}</p>
+                            <p className="text-xs text-white/50 mt-1">{track.mode} • {track.genre} • Infinite</p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors">
+                              <svg className="w-3 h-3 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                              </svg>
+                            </button>
+                            <button className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors">
+                              <svg className="w-3 h-3 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            ) : showMusicPlayer ? (
+            ) : (() => {
+              console.log('showMusicPlayer:', showMusicPlayer);
+              return showMusicPlayer;
+            })() ? (
               /* Modern Music Player View */
               <div 
                 className={`relative w-full h-[580px] rounded-xl overflow-hidden ${
@@ -1605,7 +1796,10 @@ export const Dashboard: React.FC = () => {
                 {/* Dark overlay */}
                 <div className="absolute inset-0 bg-black bg-opacity-70"></div>
 
-                {!showInlineTimerSettings ? (
+                {(() => {
+                  console.log('Rendering conditions - showPlayerSettings:', showPlayerSettings, 'showInlineTimerSettings:', showInlineTimerSettings);
+                  return !showInlineTimerSettings && !showPlayerSettings;
+                })() ? (
                   // Music Player View
                   <>
                 
@@ -1716,9 +1910,25 @@ export const Dashboard: React.FC = () => {
                   
                   {/* Right - Action buttons */}
                   <div className="flex items-center gap-2">
-                    <button className="p-2 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors">
+                    <button 
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('Player settings button clicked');
+                        setShowPlayerSettings(true);
+                      }}
+                      className={`p-2 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors relative z-50 ${showPlayerSettings ? 'bg-white bg-opacity-30' : ''}`}
+                      title="Player Settings"
+                    >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                        <g strokeWidth={2}>
+                          {/* Musical note */}
+                          <path d="M9 18V5l12-2v13" />
+                          <circle cx="6" cy="18" r="3" />
+                          <circle cx="18" cy="16" r="3" />
+                          {/* Settings gear around the note */}
+                          <circle cx="19" cy="5" r="2" fill="currentColor" />
+                        </g>
                       </svg>
                     </button>
                     <button className="p-2 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors">
@@ -1781,6 +1991,11 @@ export const Dashboard: React.FC = () => {
                           }
                         } else {
                           setIsPlaying(true);
+                          // Track the current song when playing
+                          const currentSong = getCurrentSong();
+                          if (currentSong && selectedMusicMode) {
+                            addRecentTrack(currentSong, selectedMusicMode);
+                          }
                           if (window.focusPlayer) {
                             window.focusPlayer.playMode(selectedMusicMode);
                           }
@@ -1825,7 +2040,9 @@ export const Dashboard: React.FC = () => {
                         {getCurrentSong()?.title || 'Black Lights'}
                       </h4>
                       <div className="flex items-center gap-1 text-xs text-gray-300 mt-0.5">
-                        <span className="bg-white bg-opacity-20 px-1.5 py-0.5 rounded text-xs">{getCurrentSong()?.effect || 'Low Neural Effect'}</span>
+                        <span className="bg-white bg-opacity-20 px-1.5 py-0.5 rounded text-xs">
+                          {appliedNeuralEffect.charAt(0).toUpperCase() + appliedNeuralEffect.slice(1)} Neural Effect
+                        </span>
                         <span>{getCurrentSong()?.genre || 'ELECTRONIC'}</span>
                         <span>DETAILS</span>
                       </div>
@@ -1891,7 +2108,7 @@ export const Dashboard: React.FC = () => {
                 </div>
 
                   </>
-                ) : (
+                ) : showInlineTimerSettings ? (
                   // Timer Settings View
                   <div className="absolute inset-0 flex flex-col justify-center items-center text-white p-8">
                     {/* Glass overlay */}
@@ -2017,6 +2234,243 @@ export const Dashboard: React.FC = () => {
                         >
                           APPLY
                         </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  // Player Settings View - Brain.fm Style
+                  <div className="absolute inset-0 flex text-white">
+                    {/* Transparent overlay */}
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-2xl"></div>
+                    
+                    {/* Settings Layout */}
+                    <div className="relative z-10 w-full h-full flex">
+                      {/* Left Sidebar - Genre Selection */}
+                      <div className="w-80 bg-transparent border-r border-white/10 p-6 overflow-y-auto custom-scrollbar">
+                        {/* Header */}
+                        <div className="mb-6">
+                          <h2 className="text-white text-center text-sm font-medium mb-8">Player Settings</h2>
+                          
+                          <h3 className="text-white text-sm font-medium mb-2">Genre</h3>
+                          <p className="text-white/60 text-xs mb-4">Select the genres you would like to hear while listening.</p>
+                        </div>
+                        
+                        {/* Music Section */}
+                        <div className="mb-6">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-white text-sm font-medium">Music</h4>
+                            <button className="text-xs text-white/60 hover:text-white underline">Select All</button>
+                          </div>
+                          <div className="space-y-0">
+                            {[
+                              { key: 'acoustic', label: 'Acoustic', icon: '🎸' },
+                              { key: 'atmospheric', label: 'Atmospheric', icon: '✨' },
+                              { key: 'cinematic', label: 'Cinematic', icon: '🎬' },
+                              { key: 'classical', label: 'Classical', icon: '🎻' },
+                              { key: 'drone', label: 'Drone', icon: '〰️' },
+                              { key: 'electronic', label: 'Electronic', icon: '🎹' },
+                              { key: 'grooves', label: 'Grooves', icon: '🥁' },
+                              { key: 'lofi', label: 'Lofi', icon: '📻' },
+                              { key: 'piano', label: 'Piano', icon: '🎹' }
+                            ].map((genre) => (
+                              <div 
+                                key={genre.key} 
+                                className="flex items-center justify-between py-3 px-3 hover:bg-white/5 cursor-pointer transition-colors"
+                                onClick={() => setSelectedGenres(prev => ({ ...prev, [genre.key]: !prev[genre.key] }))}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-base">{genre.icon}</span>
+                                  <span className="text-white text-sm">{genre.label}</span>
+                                </div>
+                                {selectedGenres[genre.key] && (
+                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        {/* Nature Section */}
+                        <div className="mb-6">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-white text-sm font-medium">Nature</h4>
+                            <button className="text-xs text-white/60 hover:text-white underline">Select All</button>
+                          </div>
+                          <div className="space-y-0">
+                            {[
+                              { key: 'beach', label: 'Beach', icon: '🏖️' },
+                              { key: 'chimes', label: 'Chimes & Bowls', icon: '🎋' },
+                              { key: 'forest', label: 'Forest', icon: '🌲' },
+                              { key: 'nightsounds', label: 'Nightsounds', icon: '🌙' },
+                              { key: 'rain', label: 'Rain', icon: '🌧️' },
+                              { key: 'rainforest', label: 'Rainforest', icon: '🌿' },
+                              { key: 'river', label: 'River', icon: '🏞️' },
+                              { key: 'thunder', label: 'Thunder', icon: '⚡' },
+                              { key: 'underwater', label: 'Underwater', icon: '🌊' },
+                              { key: 'wind', label: 'Wind', icon: '💨' }
+                            ].map((genre) => (
+                              <div 
+                                key={genre.key} 
+                                className="flex items-center justify-between py-3 px-3 hover:bg-white/5 cursor-pointer transition-colors"
+                                onClick={() => setSelectedGenres(prev => ({ ...prev, [genre.key]: !prev[genre.key] }))}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-base">{genre.icon}</span>
+                                  <span className="text-white text-sm">{genre.label}</span>
+                                </div>
+                                {selectedGenres[genre.key] && (
+                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Right Content Area - Neural Effect Level */}
+                      <div className="flex-1 bg-transparent p-8 relative">
+                        <div className="max-w-lg">
+                          {/* Neural Effect Level */}
+                          <h3 className="text-white text-sm font-medium mb-2">Neural Effect Level ⓘ</h3>
+                          <p className="text-white/60 text-xs mb-6">Select the neural effect level(s) you'd like us to incorporate into your session.</p>
+                          
+                          <div className="space-y-3">
+                            {/* Low Effect */}
+                            <div 
+                              className={`p-4 rounded-lg cursor-pointer transition-colors ${
+                                neuralEffectLevel === 'low' 
+                                  ? 'bg-white/10 border border-white/20' 
+                                  : 'bg-white/5 hover:bg-white/8'
+                              }`}
+                              onClick={() => setNeuralEffectLevel('low')}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${
+                                  neuralEffectLevel === 'low' 
+                                    ? 'border-white bg-white' 
+                                    : 'border-white/40'
+                                }`}>
+                                  {neuralEffectLevel === 'low' && (
+                                    <div className="w-2 h-2 bg-black rounded-full"></div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-white font-medium mb-1">☐ Low Effect</div>
+                                  <div className="text-xs text-white/60 leading-relaxed">
+                                    Use this effect level if you are generally sensitive to sounds, or if the higher effect levels feel too intense.
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Medium Effect */}
+                            <div 
+                              className={`p-4 rounded-lg cursor-pointer transition-colors ${
+                                neuralEffectLevel === 'medium' 
+                                  ? 'bg-white/10 border border-white/20' 
+                                  : 'bg-white/5 hover:bg-white/8'
+                              }`}
+                              onClick={() => setNeuralEffectLevel('medium')}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${
+                                  neuralEffectLevel === 'medium' 
+                                    ? 'border-white bg-white' 
+                                    : 'border-white/40'
+                                }`}>
+                                  {neuralEffectLevel === 'medium' && (
+                                    <div className="w-2 h-2 bg-black rounded-full"></div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-white font-medium mb-1">☐ Medium Effect</div>
+                                  <div className="text-xs text-white/60 leading-relaxed">
+                                    Our standard level of neural phase locking is a great place to start. Be sure to try the other levels to find what works best for you!
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* High Effect */}
+                            <div 
+                              className={`p-4 rounded-lg cursor-pointer transition-colors ${
+                                neuralEffectLevel === 'high' 
+                                  ? 'bg-white/10 border border-white/20' 
+                                  : 'bg-white/5 hover:bg-white/8'
+                              }`}
+                              onClick={() => setNeuralEffectLevel('high')}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`w-4 h-4 rounded-full border-2 mt-0.5 flex items-center justify-center ${
+                                  neuralEffectLevel === 'high' 
+                                    ? 'border-white bg-white' 
+                                    : 'border-white/40'
+                                }`}>
+                                  {neuralEffectLevel === 'high' && (
+                                    <div className="w-2 h-2 bg-black rounded-full"></div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-white font-medium mb-1">☐ High Effect</div>
+                                  <div className="text-xs text-white/60 leading-relaxed">
+                                    Use the strongest level of our neural phase locking technology if you need extra stimulation, or have attentional challenges (ADHD or similar).
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Bottom Buttons */}
+                        <div className="absolute bottom-8 left-8 right-8">
+                          <div className="flex gap-4">
+                            <button
+                              onClick={() => setShowPlayerSettings(false)}
+                              className="flex-1 py-3 bg-white/10 backdrop-blur-sm rounded-lg font-medium hover:bg-white/15 transition-all text-sm text-white border border-white/10"
+                            >
+                              CANCEL
+                            </button>
+                            <button
+                              onClick={() => {
+                                // Apply the selected preferences
+                                const selectedGenresList = Object.entries(selectedGenres)
+                                  .filter(([key, selected]) => selected)
+                                  .map(([key, selected]) => key);
+                                
+                                // Update the applied settings
+                                setAppliedGenres(selectedGenresList);
+                                setAppliedNeuralEffect(neuralEffectLevel);
+                                
+                                console.log('Applied Genres:', selectedGenresList);
+                                console.log('Applied Neural Effect Level:', neuralEffectLevel);
+                                
+                                // If currently playing, update the playlist to use filtered songs
+                                if (selectedMusicMode && selectedGenresList.length > 0) {
+                                  const filteredSongs = getFilteredSongs(selectedMusicMode);
+                                  if (filteredSongs.length > 0) {
+                                    // Reset to first song of filtered playlist if current song doesn't match
+                                    const currentPlaylist = songsPlaylist[selectedMusicMode];
+                                    const currentSong = currentPlaylist[currentSongIndex];
+                                    
+                                    if (!filteredSongs.includes(currentSong)) {
+                                      setCurrentSongIndex(0);
+                                    }
+                                  }
+                                }
+                                
+                                // Close settings without showing popup
+                                setShowPlayerSettings(false);
+                              }}
+                              className="flex-1 py-3 bg-white/80 text-gray-900 rounded-lg font-medium hover:bg-white transition-all text-sm"
+                            >
+                              APPLY
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
