@@ -49,6 +49,71 @@ export const Dashboard: React.FC = () => {
     { mode: 'sleep', activity: 'Deep Sleep', time: '8 hrs', color: 'bg-purple-500' },
     { mode: 'focus', activity: 'Custom Focus Mix', time: '90 mins', color: 'bg-red-500' }
   ]);
+
+  // Focus dropdown state and options
+  const [showFocusDropdown, setShowFocusDropdown] = useState(false);
+  const [selectedFocusOption, setSelectedFocusOption] = useState('Deep Work');
+  const [isTimerHovered, setIsTimerHovered] = useState(false);
+  
+  
+  // Update your options to hold an svg property
+  const musicDropdownOptions = {
+    focus: [
+      { id: 'deep-work', label: 'Deep Work', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <line x1="10" y1="1" x2="10" y2="19"/>
+          <line x1="1" y1="10" x2="19" y2="10"/>
+          <line x1="4" y1="4" x2="16" y2="16"/>
+          <line x1="4" y1="16" x2="16" y2="4"/>
+        </svg>
+      ) },
+      { id: 'motivation', label: 'Motivation', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <polyline points="8,1 12,9 9,9 12,19 7,13 11,13 8,1"/>
+        </svg>
+      ) },
+      { id: 'creativity', label: 'Creativity', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <rect x="4" y="9" width="12" height="7" rx="2"/>
+          <ellipse cx="10" cy="8" rx="5" ry="3"/>
+        </svg>
+      ) },
+      { id: 'learning', label: 'Learning', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <rect x="6" y="5" width="8" height="10" rx="1"/>
+          <line x1="6" y1="8" x2="14" y2="8"/>
+          <line x1="10" y1="5" x2="10" y2="15"/>
+        </svg>
+      ) },
+      { id: 'light-work', label: 'Light Work', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <line x1="15" y1="4" x2="10" y2="15"/>
+          <rect x="7" y="15" width="6" height="2" />
+          <rect x="12" y="3" width="4" height="3" rx="1.5" transform="rotate(30 12 3)"/>
+        </svg>
+      ) }
+    ],
+    relax: [
+      { id: 'nature-sounds', label: 'Nature Sounds', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <ellipse cx="10" cy="15" rx="6" ry="3"/>
+          <rect x="7" y="12" width="6" height="6" rx="3"/>
+        </svg>
+      ) },
+      { id: 'ambient', label: 'Ambient', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <circle cx="10" cy="10" r="7"/>
+          <circle cx="10" cy="10" r="3"/>
+        </svg>
+      ) },
+      { id: 'breathing', label: 'Breathing', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <circle cx="10" cy="10" r="6" opacity=".6"/>
+          <circle cx="10" cy="10" r="2"/>
+        </svg>
+      ) }
+    ]
+  };
   
   const { user } = useAuth();
   const { supabase } = useSupabase();
@@ -359,8 +424,20 @@ export const Dashboard: React.FC = () => {
         currentTime 
       });
       
-      // Base weekly streak calculation
-      let weekStreak = 15; // Lower base for more dynamic feel
+      // Real-time streak calculation based on current activity
+      let weekStreak = 0;
+      
+      // If timer is currently running, start from 1
+      if (isCurrentlyActive) {
+        weekStreak = 1;
+        // Add bonus for continuous activity
+        if (currentTime > 60) weekStreak += Math.floor(currentTime / 300); // +1 every 5 minutes
+      }
+      
+      // Add streak for accumulated weekly minutes
+      if (weekMinutes > 0) {
+        weekStreak += Math.floor(weekMinutes / 30); // +1 every 30 minutes this week
+      }
       
       // Dynamic weekly adjustments
       const weeklyTarget = 300; // 5 hours per week target
@@ -464,6 +541,23 @@ export const Dashboard: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [showJumpBackView, jumpBackAnimated]);
+
+  // Close focus dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showFocusDropdown) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.focus-dropdown-container')) {
+          setShowFocusDropdown(false);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showFocusDropdown]);
 
   // User status based on timer state - only show as online if timer is actually running
   const getCurrentUserStatus = () => {
@@ -1219,7 +1313,7 @@ export const Dashboard: React.FC = () => {
             ) : showMusicPlayer ? (
               /* Modern Music Player View */
               <div 
-                className={`relative w-full h-96 rounded-xl overflow-hidden ${
+                className={`relative w-full h-[450px] rounded-xl overflow-hidden ${
                   selectedMusicMode === 'focus' 
                     ? 'bg-gradient-to-br from-purple-600 via-pink-600 to-purple-800'
                     : selectedMusicMode === 'relax'
@@ -1258,16 +1352,82 @@ export const Dashboard: React.FC = () => {
                       </svg>
                     </button>
                     
-                    <div className="flex items-center gap-2 bg-black bg-opacity-30 rounded-full px-3 py-1">
-                      <div className="w-4 h-4 flex items-center justify-center">
-                        {selectedMusicMode === 'focus' ? '🎯' : 
-                         selectedMusicMode === 'relax' ? '🏝️' : 
-                         selectedMusicMode === 'sleep' ? '🌙' : '🧘'}
-                      </div>
-                      <span className="text-sm font-medium capitalize">{selectedMusicMode}</span>
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
+                    <div className="relative focus-dropdown-container">
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('Focus dropdown button clicked, current state:', showFocusDropdown);
+                          setShowFocusDropdown(!showFocusDropdown);
+                        }}
+                        className="flex items-center gap-2 bg-black/20 backdrop-blur-sm rounded-full px-3 py-1 hover:bg-black/30 transition-all duration-200 cursor-pointer relative z-10"
+                      >
+                        <span className="w-5 h-5 flex items-center justify-center">
+                          {(() => {
+                            const currentOptions = musicDropdownOptions.focus;
+                            const currentOption = currentOptions.find(opt => opt.label === selectedFocusOption);
+                            return currentOption?.svg || (
+                              <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+                                <line x1="10" y1="1" x2="10" y2="19"/>
+                                <line x1="1" y1="10" x2="19" y2="10"/>
+                                <line x1="4" y1="4" x2="16" y2="16"/>
+                                <line x1="4" y1="16" x2="16" y2="4"/>
+                              </svg>
+                            );
+                          })()}
+                        </span>
+                        <span className="text-sm font-medium">{selectedFocusOption}</span>
+                        <svg 
+                          className={`w-3 h-3 transition-transform duration-200 ${showFocusDropdown ? 'rotate-180' : ''}`} 
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      
+                      {showFocusDropdown && (
+                        <div className="absolute top-full left-0 mt-2 w-48 rounded-lg shadow-2xl z-[100] overflow-hidden"
+                             style={{ 
+                               background: 'rgba(0, 0, 0, 0.3)',
+                               backdropFilter: 'blur(20px) saturate(150%)',
+                               border: '1px solid rgba(255, 255, 255, 0.1)',
+                               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                             }}>
+                          <div className="p-2">
+                            <div className="mb-1.5">
+                              <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">ACTIVITIES</h3>
+                            </div>
+                            <div className="space-y-0.5">
+                              {musicDropdownOptions.focus.map((option) => (
+                                <button
+                                  key={option.id}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setSelectedFocusOption(option.label);
+                                    setShowFocusDropdown(false);
+                                  }}
+                                  className={`w-full flex items-center gap-2 px-2.5 py-2 text-left rounded-md transition-all duration-200 text-white ${
+                                    selectedFocusOption === option.label 
+                                      ? 'bg-white/20 shadow-sm' 
+                                      : 'hover:bg-white/10'
+                                  }`}
+                                >
+                                  <span className="w-6 h-6 flex items-center justify-center">{option.svg}</span>
+                                  <span className="text-sm font-medium flex-1">{option.label}</span>
+                                  {selectedFocusOption === option.label && (
+                                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                   
@@ -1289,19 +1449,27 @@ export const Dashboard: React.FC = () => {
                 {/* Center - Timer Display */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
                   <div className="text-sm font-medium mb-3 uppercase tracking-wider opacity-80">
-                    {selectedMusicMode === 'focus' ? 'INCREASING FOCUS...' 
+                    {isTimerHovered && selectedMusicMode === 'focus' ? 'CLICK TO TOGGLE TIMER SETTINGS'
+                     : selectedMusicMode === 'focus' ? 'INCREASING FOCUS...' 
                      : selectedMusicMode === 'relax' ? 'RELAXING...'
                      : selectedMusicMode === 'sleep' ? 'SLEEPING...'
                      : 'MEDITATING...'}
                   </div>
-                  <div className="text-7xl font-light mb-4">
+                  <div 
+                    className="text-7xl font-light mb-4"
+                    onMouseEnter={() => setIsTimerHovered(true)}
+                    onMouseLeave={() => setIsTimerHovered(false)}
+                  >
                     {Math.floor(currentTime / 60)}:{(currentTime % 60).toString().padStart(2, '0')}
                   </div>
                   
                   {/* Infinite Play Dropdown */}
                   <button
                     onClick={() => setShowTimerSettings(true)}
+                    title="Click to toggle timer settings"
                     className="flex items-center gap-2 px-5 py-2 bg-black bg-opacity-40 rounded-full text-sm hover:bg-opacity-60 transition-all border border-white border-opacity-20 mb-8"
+                    onMouseEnter={() => setIsTimerHovered(true)}
+                    onMouseLeave={() => setIsTimerHovered(false)}
                   >
                     <span className="text-lg">∞</span>
                     <span>{timerMode === 'infinite' ? 'Infinite Play' : `${customTimer.hours}h ${customTimer.minutes}m`}</span>
@@ -1314,7 +1482,7 @@ export const Dashboard: React.FC = () => {
                   <div className="flex items-center gap-8">
                     <button className="p-3 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors">
                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                       </svg>
                     </button>
                     
@@ -1395,76 +1563,45 @@ export const Dashboard: React.FC = () => {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                     </svg>
-                    <div 
-                      className="volume-slider w-20 h-1 bg-gray-600 rounded-full relative cursor-pointer"
-                      onMouseDown={(e) => {
-                        setIsDraggingVolume(true);
-                        const updateVolume = (clientX) => {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const x = clientX - rect.left;
-                          const percentage = (x / rect.width) * 100;
-                          const newVolume = Math.max(0, Math.min(100, percentage));
-                          
-                          console.log('Setting volume via drag:', newVolume, 'Player exists:', !!window.focusPlayer);
-                          setVolume(newVolume);
-                          
-                          // Real-time audio update with debugging
-                          if (window.focusPlayer) {
-                            if (window.focusPlayer.updateVolume) {
-                              window.focusPlayer.updateVolume(newVolume);
-                              console.log('Volume updated via updateVolume method');
-                            } else {
-                              // Fallback direct update
-                              if (window.focusPlayer.leftGain && window.focusPlayer.rightGain) {
-                                const audioVolume = Math.max(0, Math.min(1, (newVolume / 100) * 0.3));
-                                window.focusPlayer.leftGain.gain.setValueAtTime(audioVolume, window.focusPlayer.audioContext.currentTime);
-                                window.focusPlayer.rightGain.gain.setValueAtTime(audioVolume, window.focusPlayer.audioContext.currentTime);
-                                console.log('Volume updated via direct gain control:', audioVolume);
-                              }
-                            }
-                          } else {
-                            console.log('No focusPlayer found!');
-                          }
-                        };
-                        updateVolume(e.clientX);
-                      }}
-                      onClick={(e) => {
-                        if (!isDraggingVolume) {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const x = e.clientX - rect.left;
-                          const percentage = (x / rect.width) * 100;
-                          const newVolume = Math.max(0, Math.min(100, percentage));
-                          setVolume(newVolume);
-                          
-                          // Real-time audio update with debugging
-                          console.log('Setting volume via click:', newVolume, 'Player exists:', !!window.focusPlayer);
-                          if (window.focusPlayer) {
-                            if (window.focusPlayer.updateVolume) {
-                              window.focusPlayer.updateVolume(newVolume);
-                              console.log('Volume updated via updateVolume method (click)');
-                            } else {
-                              // Fallback direct update
-                              if (window.focusPlayer.leftGain && window.focusPlayer.rightGain) {
-                                const audioVolume = Math.max(0, Math.min(1, (newVolume / 100) * 0.3));
-                                window.focusPlayer.leftGain.gain.setValueAtTime(audioVolume, window.focusPlayer.audioContext.currentTime);
-                                window.focusPlayer.rightGain.gain.setValueAtTime(audioVolume, window.focusPlayer.audioContext.currentTime);
-                                console.log('Volume updated via direct gain control (click):', audioVolume);
-                              }
-                            }
-                          } else {
-                            console.log('No focusPlayer found on click!');
-                          }
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={volume}
+                      onChange={(e) => {
+                        const newVolume = parseInt(e.target.value);
+                        setVolume(newVolume);
+                        if (window.focusPlayer && window.focusPlayer.updateVolume) {
+                          window.focusPlayer.updateVolume(newVolume);
                         }
-                      }}>
-                      <div 
-                        className="h-1 bg-red-400 rounded-full" 
-                        style={{ width: `${volume}%` }}
-                      ></div>
-                      <div 
-                        className="absolute top-0 w-3 h-3 bg-white rounded-full transform -translate-y-1 cursor-pointer" 
-                        style={{ left: `${volume}%`, marginLeft: '-6px' }}
-                      ></div>
-                    </div>
+                      }}
+                      className="w-20 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer focus:outline-none"
+                      style={{
+                        background: `linear-gradient(to right, #ef4444 0%, #ef4444 ${volume}%, #4b5563 ${volume}%, #4b5563 100%)`,
+                        WebkitAppearance: 'none',
+                        height: '4px'
+                      }}
+                    />
+                    <style jsx>{`
+                      input[type="range"]::-webkit-slider-thumb {
+                        appearance: none;
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 50%;
+                        background: #ffffff;
+                        cursor: pointer;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                      }
+                      input[type="range"]::-moz-range-thumb {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 50%;
+                        background: #ffffff;
+                        cursor: pointer;
+                        border: none;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                      }
+                    `}</style>
                   </div>
                 </div>
               </div>
