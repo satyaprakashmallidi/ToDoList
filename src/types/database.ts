@@ -7,6 +7,12 @@ export interface Database {
           email: string
           full_name: string | null
           name: string | null
+          first_name: string | null
+          last_name: string | null
+          gender: string | null
+          country: string | null
+          language: string | null
+          time_zone: string | null
           role: 'user' | 'admin' | null
           avatar_url: string | null
           created_at: string | null
@@ -17,6 +23,12 @@ export interface Database {
           email: string
           full_name?: string | null
           name?: string | null
+          first_name?: string | null
+          last_name?: string | null
+          gender?: string | null
+          country?: string | null
+          language?: string | null
+          time_zone?: string | null
           role?: 'user' | 'admin' | null
           avatar_url?: string | null
           created_at?: string | null
@@ -27,6 +39,12 @@ export interface Database {
           email?: string
           full_name?: string | null
           name?: string | null
+          first_name?: string | null
+          last_name?: string | null
+          gender?: string | null
+          country?: string | null
+          language?: string | null
+          time_zone?: string | null
           role?: 'user' | 'admin' | null
           avatar_url?: string | null
           created_at?: string | null
@@ -358,6 +376,32 @@ export interface Database {
           is_deleted?: boolean
           deleted_by?: string | null
           deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
+      user_emails: {
+        Row: {
+          id: string
+          user_id: string
+          email: string
+          is_verified: boolean
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          email: string
+          is_verified?: boolean
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          email?: string
+          is_verified?: boolean
           created_at?: string | null
           updated_at?: string | null
         }

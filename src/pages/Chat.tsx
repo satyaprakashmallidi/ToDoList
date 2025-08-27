@@ -444,7 +444,7 @@ export const Chat: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex bg-gray-50">
+    <div className="h-[calc(100vh-2rem)] sm:h-[calc(100vh-3rem)] w-full flex bg-gray-50 -m-4 sm:-m-6">
       {/* Left Sidebar */}
       <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col">
         {/* Single Chat Header */}
