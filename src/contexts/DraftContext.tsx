@@ -45,6 +45,7 @@ interface DraftContextType {
   addScheduledMessage: (message: Omit<ScheduledMessage, 'id' | 'timestamp' | 'status'>) => void;
   cancelScheduledMessage: (id: string) => void;
   clearAllDrafts: () => void;
+  clearAllData: () => void;
   getDraft: (id: string) => DraftMessage | undefined;
   searchDrafts: (query: string) => DraftMessage[];
   searchSent: (query: string) => SentMessage[];
@@ -58,44 +59,18 @@ const SENT_STORAGE_KEY = 'magicteams_sent_messages';
 const SCHEDULED_STORAGE_KEY = 'magicteams_scheduled_messages';
 
 export const DraftProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [drafts, setDrafts] = useState<DraftMessage[]>(() => {
-    const stored = localStorage.getItem(DRAFTS_STORAGE_KEY);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch (error) {
-        console.error('Error loading drafts:', error);
-        return [];
-      }
-    }
-    return [];
-  });
+  // Clear all existing data on initialization for clean start
+  useEffect(() => {
+    localStorage.removeItem(DRAFTS_STORAGE_KEY);
+    localStorage.removeItem(SENT_STORAGE_KEY);
+    localStorage.removeItem(SCHEDULED_STORAGE_KEY);
+  }, []);
 
-  const [sentMessages, setSentMessages] = useState<SentMessage[]>(() => {
-    const stored = localStorage.getItem(SENT_STORAGE_KEY);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch (error) {
-        console.error('Error loading sent messages:', error);
-        return [];
-      }
-    }
-    return [];
-  });
+  const [drafts, setDrafts] = useState<DraftMessage[]>([]);
 
-  const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>(() => {
-    const stored = localStorage.getItem(SCHEDULED_STORAGE_KEY);
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch (error) {
-        console.error('Error loading scheduled messages:', error);
-        return [];
-      }
-    }
-    return [];
-  });
+  const [sentMessages, setSentMessages] = useState<SentMessage[]>([]);
+
+  const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>([]);
 
   // Save to localStorage whenever drafts change
   useEffect(() => {
@@ -173,6 +148,15 @@ export const DraftProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     localStorage.removeItem(DRAFTS_STORAGE_KEY);
   };
 
+  const clearAllData = () => {
+    setDrafts([]);
+    setSentMessages([]);
+    setScheduledMessages([]);
+    localStorage.removeItem(DRAFTS_STORAGE_KEY);
+    localStorage.removeItem(SENT_STORAGE_KEY);
+    localStorage.removeItem(SCHEDULED_STORAGE_KEY);
+  };
+
   const getDraft = (id: string) => {
     return drafts.find(d => d.id === id);
   };
@@ -220,6 +204,7 @@ export const DraftProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         addScheduledMessage,
         cancelScheduledMessage,
         clearAllDrafts,
+        clearAllData,
         getDraft,
         searchDrafts,
         searchSent,

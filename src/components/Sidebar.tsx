@@ -86,7 +86,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onToggle }) =
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-6 h-6 text-purple-500" />
+                      <img 
+                        src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756368405/magicteams_k6b5jh.png" 
+                        alt="Magic Teams" 
+                        className="w-10 h-10 object-contain"
+                      />
                       <h2 className="text-xl font-semibold text-gray-900">Magic Teams</h2>
                     </div>
                  

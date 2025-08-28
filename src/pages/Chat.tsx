@@ -29,6 +29,7 @@ import {
   Code,
   Mic,
   Video,
+  Camera,
   X,
   MoreHorizontal,
   Clock,
@@ -135,6 +136,9 @@ export const Chat: React.FC = () => {
   const [editingDraft, setEditingDraft] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  
+  // Activity state
+  const [activityTab, setActivityTab] = useState<'mentions' | 'reactions' | 'assigned'>('mentions');
 
   // Sidebar items for replies section
   const sidebarItems: SidebarItem[] = [
@@ -471,7 +475,7 @@ export const Chat: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-full flex bg-gray-50 -m-4 sm:-m-6">
+    <div className="h-screen w-full flex bg-gray-50 -mx-3 -my-4 sm:-mx-6 sm:-my-6 lg:-mx-8 lg:-my-8">
       {/* Left Sidebar */}
       <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col h-full">
         {/* Single Chat Header */}
@@ -1033,7 +1037,7 @@ export const Chat: React.FC = () => {
             /* Posts Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Posts Header */}
-              <div className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
+              <div className="px-4 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-gray-900">Posts</h2>
                 <button 
                   onClick={() => setShowNewPostModal(true)}
@@ -1044,12 +1048,16 @@ export const Chat: React.FC = () => {
               </div>
 
               {/* Posts Content */}
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto max-h-[75vh]">
                 {/* Create Post Section */}
-                <div className="p-6 border-b border-gray-200 bg-gray-50">
+                <div className="p-4 border-b border-gray-200 bg-gray-50">
                   <div className="flex items-start space-x-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      {user?.email?.charAt(0).toUpperCase() || 'V'}
+                    <div className="w-10 h-10 rounded-full overflow-hidden">
+                      <img 
+                        src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756368405/magicteams_k6b5jh.png" 
+                        alt="Magic Teams" 
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1">
                       {/* Channel Selector */}
@@ -1063,24 +1071,24 @@ export const Chat: React.FC = () => {
                       </div>
 
                       {/* Post Input */}
-                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <div className="bg-white border border-gray-200 rounded-lg p-2">
                         <input
                           type="text"
                           placeholder="Post topic"
                           value={postTitle}
                           onChange={(e) => setPostTitle(e.target.value)}
-                          className="w-full text-lg font-medium placeholder-gray-500 border-0 focus:outline-none mb-2"
+                          className="w-full text-base font-medium placeholder-gray-500 border-0 focus:outline-none mb-1"
                         />
                         <textarea
                           placeholder="Write an update..."
                           value={postContent}
                           onChange={(e) => setPostContent(e.target.value)}
-                          rows={3}
+                          rows={2}
                           className="w-full placeholder-gray-500 border-0 focus:outline-none resize-none"
                         />
                         
                         {/* Post Actions */}
-                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
                           <div className="flex items-center space-x-2">
                             <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
                               <Plus className="w-4 h-4" />
@@ -1113,7 +1121,7 @@ export const Chat: React.FC = () => {
                 </div>
 
                 {/* Filter Bar */}
-                <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <div className="px-4 py-4 border-b border-gray-200 bg-white">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <button className="px-3 py-1.5 bg-blue-100 text-blue-700 text-sm font-medium rounded-full flex items-center">
@@ -1140,116 +1148,139 @@ export const Chat: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Posts List */}
-                <div className="p-6">
-                  {/* Date Header */}
-                  <div className="text-sm font-medium text-gray-500 mb-4">Jun 13</div>
+                {/* Posts List - Empty State */}
+                <div className="flex-1 flex items-center justify-center p-8">
+                  <div className="text-center">
+                    <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <FileText className="w-8 h-8 text-gray-400" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No posts yet</h3>
+                    <p className="text-gray-600 mb-4">
+                      Posts from your team will appear here when they're shared.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-                  {/* Sample Post */}
-                  <div className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                        SP
+              {/* New Post Modal */}
+              {showNewPostModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-hidden">
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                      <div className="flex items-center space-x-3">
+                        <button className="flex items-center justify-between w-48 px-3 py-2 text-left bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-50">
+                          <span className="text-gray-700">Select Channel</span>
+                          <ChevronDown className="w-4 h-4 text-gray-500" />
+                        </button>
                       </div>
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <span className="font-semibold text-gray-900">satya Phanindra</span>
-                          <span className="text-sm text-gray-500">in Product building every ai • Jun 13 •</span>
-                          <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded flex items-center">
-                            <span className="mr-1">🔔</span>
-                            Update
-                          </span>
-                        </div>
-                        
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                          tasks of phanindra june 13
-                        </h3>
-                        
-                        <div className="text-gray-800 space-y-2">
-                          <p>guys , my tasks today</p>
-                          <ul className="list-disc list-inside space-y-1 ml-4">
-                            <li>linkedin messages</li>
-                            <li>youtube video demos of magicteams</li>
-                            <li>20 people outreach</li>
-                          </ul>
-                          <p>will update by afternoon,</p>
-                        </div>
-                        
-                        {/* Post Actions */}
-                        <div className="flex items-center space-x-4 mt-4 pt-3 border-t border-gray-100">
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <span className="mr-1">👍</span>
-                          </button>
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <Reply className="w-4 h-4" />
-                          </button>
-                        </div>
+                      <button 
+                        onClick={() => setShowNewPostModal(false)}
+                        className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Modal Content */}
+                    <div className="p-6">
+                      {/* Post Input */}
+                      <div className="space-y-4">
+                        <input
+                          type="text"
+                          placeholder="Post topic"
+                          value={postTitle}
+                          onChange={(e) => setPostTitle(e.target.value)}
+                          className="w-full text-lg font-medium placeholder-gray-500 border-0 focus:outline-none bg-transparent"
+                        />
+                        <textarea
+                          placeholder="Write an update..."
+                          value={postContent}
+                          onChange={(e) => setPostContent(e.target.value)}
+                          rows={8}
+                          className="w-full placeholder-gray-500 border-0 focus:outline-none resize-none bg-transparent"
+                        />
                       </div>
                     </div>
-                  </div>
 
-                  {/* Another Sample Post */}
-                  <div className="bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                        JD
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <span className="font-semibold text-gray-900">John Developer</span>
-                          <span className="text-sm text-gray-500">in demo implementations • Jun 12 •</span>
-                          <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded">
-                            Discussion
-                          </span>
-                        </div>
-                        
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                          Architecture decisions for Q3
-                        </h3>
-                        
-                        <div className="text-gray-800">
-                          <p>Team, I wanted to get everyone's input on the technical architecture we'll be using for the upcoming quarter. We have a few options to consider...</p>
-                        </div>
-                        
-                        {/* Post Actions */}
-                        <div className="flex items-center space-x-4 mt-4 pt-3 border-t border-gray-100">
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <span className="mr-1">👍</span>
-                            <span className="text-sm">2</span>
+                    {/* Modal Footer */}
+                    <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Plus className="w-4 h-4" />
                           </button>
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <Reply className="w-4 h-4 mr-1" />
-                            <span className="text-sm">3</span>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Paperclip className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <AtSign className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Hash className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Smile className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Camera className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Mic className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <FileText className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <button className="px-3 py-1.5 text-gray-700 bg-gray-200 hover:bg-gray-300 rounded flex items-center">
+                            <span className="mr-1">🔔</span>
+                            Update
+                            <ChevronDown className="w-3 h-3 ml-1" />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              // Handle post submission
+                              setPostTitle('');
+                              setPostContent('');
+                              setShowNewPostModal(false);
+                            }}
+                            className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            Post
                           </button>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : activeSidebarItem === 'replies' ? (
             /* Replies Content */
-            <div className="flex-1 flex flex-col">
-              {/* Unread/Read Toggle - Only for Replies */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white">
-                <div className="flex bg-gray-100 rounded-lg p-1">
+            <div className="flex-1 flex flex-col bg-white">
+              {/* Replies Header */}
+              <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Replies</h2>
+                
+                {/* Unread/Read Tabs - Discord Style */}
+                <div className="flex space-x-6">
                   <button
                     onClick={() => setRepliesTab('unread')}
-                    className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
                       repliesTab === 'unread'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'text-gray-900 border-blue-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
                     }`}
                   >
                     Unread
                   </button>
                   <button
                     onClick={() => setRepliesTab('read')}
-                    className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
                       repliesTab === 'read'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'text-gray-900 border-blue-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
                     }`}
                   >
                     Read
@@ -1257,183 +1288,58 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
 
-              {/* Replies Content Based on Tab */}
-              {repliesTab === 'unread' ? (
-                /* Empty State for Unread */
-                <div className="flex-1 flex flex-col items-center justify-center p-6">
-              <div className="w-32 h-32 mb-6 relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-24 h-20 bg-gray-200 rounded-lg relative">
-                    <div className="absolute -top-2 -right-2 w-12 h-10 bg-gray-300 rounded-lg"></div>
-                    <div className="absolute -bottom-2 -left-2 w-12 h-10 bg-gray-300 rounded-lg"></div>
-                  </div>
-                  <div className="absolute bottom-4 right-4 w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-                    <span className="text-lg">✓</span>
-                  </div>
-                </div>
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
-              <p className="text-gray-600 text-center mb-6">
-                Looks like you don't have any unread replies
-              </p>
-              <button className="px-6 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium">
-                Read old replies
-              </button>
-            </div>
-          ) : (
-            /* Read Tab Content */
-            <div className="flex-1 flex flex-col">
-              {/* Channel Header */}
-              <div className="px-4 py-3 border-b border-gray-200 bg-white flex items-center justify-between">
-                <div className="flex items-center">
-                  <Hash className="w-4 h-4 text-gray-500 mr-2" />
-                  <span className="font-medium text-gray-900">demo implementations</span>
-                  <span className="ml-2 text-sm text-gray-500">• 2 followers</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
-                    <Bell className="w-4 h-4" />
-                  </button>
-                  <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
-                    <Search className="w-4 h-4" />
-                  </button>
-                  <button className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
-                    Mark unread
-                  </button>
-                </div>
-              </div>
-
-              {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {/* Show more button */}
-                <div className="flex justify-center">
-                  <button className="px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors">
-                    Show 12 more
-                  </button>
-                </div>
-
-                {/* Sample Messages */}
-                <div className="space-y-6">
-                  {/* Message with avatar */}
-                  <div className="flex items-start space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      J
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span className="font-semibold text-gray-900">John Developer</span>
-                        <span className="text-xs text-gray-500">Today at 2:15 PM</span>
-                      </div>
-                      <div className="text-gray-800">
-                        Here's the latest update on the implementation. I've been working on the core features and the architecture is coming together nicely.
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Message with image */}
-                  <div className="flex items-start space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      S
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className="font-semibold text-gray-900">Sarah Designer</span>
-                        <span className="text-xs text-gray-500">Today at 1:45 PM</span>
-                      </div>
-                      <div className="text-gray-800 mb-3">
-                        I've created some mockups for the new interface. Let me know what you think about the design direction.
-                      </div>
-                      {/* Sample Image */}
-                      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden max-w-md">
-                        <div className="aspect-video bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center">
-                          <div className="text-center">
-                            <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mb-2 mx-auto shadow-sm">
-                              <Image className="w-8 h-8 text-gray-400" />
-                            </div>
-                            <div className="text-sm text-gray-600">Design Mockup</div>
-                            <div className="text-xs text-gray-400 mt-1">Click to view full image</div>
-                          </div>
+              {/* Content Area */}
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+                {repliesTab === 'unread' ? (
+                  /* Unread Empty State */
+                  <div className="flex-1 flex flex-col items-center justify-center p-12">
+                    <div className="w-32 h-32 mb-6 relative">
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {/* Stacked message cards */}
+                        <div className="w-20 h-16 bg-gray-200 rounded-lg relative transform -rotate-12">
+                          <div className="absolute top-2 left-2 w-3 h-3 bg-gray-400 rounded-full"></div>
+                          <div className="absolute top-2 right-2 w-8 h-1 bg-gray-400 rounded"></div>
+                          <div className="absolute bottom-2 left-2 w-12 h-1 bg-gray-400 rounded"></div>
+                        </div>
+                        <div className="absolute w-20 h-16 bg-gray-300 rounded-lg transform rotate-6">
+                          <div className="absolute top-2 left-2 w-3 h-3 bg-gray-500 rounded-full"></div>
+                          <div className="absolute top-2 right-2 w-8 h-1 bg-gray-500 rounded"></div>
+                          <div className="absolute bottom-2 left-2 w-12 h-1 bg-gray-500 rounded"></div>
+                        </div>
+                        <div className="absolute w-20 h-16 bg-gray-400 rounded-lg transform rotate-12 translate-x-1 translate-y-1">
+                          <div className="absolute top-2 left-2 w-3 h-3 bg-gray-600 rounded-full"></div>
+                          <div className="absolute top-2 right-2 w-8 h-1 bg-gray-600 rounded"></div>
+                          <div className="absolute bottom-2 left-2 w-12 h-1 bg-gray-600 rounded"></div>
+                        </div>
+                        {/* Checkmark */}
+                        <div className="absolute bottom-0 right-0 w-8 h-8 bg-white border-2 border-green-500 rounded-full flex items-center justify-center">
+                          <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
                         </div>
                       </div>
                     </div>
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
+                    <p className="text-gray-600 text-center mb-6">
+                      Looks like you don't have any unread replies
+                    </p>
+                    <button className="px-6 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium">
+                      Read old replies
+                    </button>
                   </div>
-
-                  {/* Another message */}
-                  <div className="flex items-start space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-orange-400 to-red-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      M
+                ) : (
+                  /* Read Tab Content */
+                  <div className="flex-1 flex flex-col items-center justify-center p-12">
+                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Reply className="w-8 h-8 text-gray-400" />
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span className="font-semibold text-gray-900">Mike PM</span>
-                        <span className="text-xs text-gray-500">Yesterday at 4:30 PM</span>
-                      </div>
-                      <div className="text-gray-800">
-                        Great progress everyone! The demo implementations are looking really solid. We should be ready for the client presentation next week.
-                      </div>
-                      {/* Reaction */}
-                      <div className="flex items-center mt-2 space-x-2">
-                        <button className="px-2 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-full text-xs flex items-center space-x-1 hover:bg-blue-100">
-                          <span>👍</span>
-                          <span>3</span>
-                        </button>
-                        <button className="px-2 py-1 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs flex items-center space-x-1 hover:bg-green-100">
-                          <span>🎉</span>
-                          <span>2</span>
-                        </button>
-                      </div>
-                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No read replies</h3>
+                    <p className="text-gray-600 text-center max-w-sm">
+                      Previously read replies will appear here.
+                    </p>
                   </div>
-                </div>
+                )}
               </div>
-
-              {/* Upgrade Banner */}
-              <div className="border-t border-gray-200 bg-blue-50">
-                <div className="px-4 py-3 flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center mr-3">
-                      <MessageSquare className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">Need to see older messages?</div>
-                      <div className="text-xs text-gray-600">Upgrade to access your full Chat history.</div>
-                    </div>
-                  </div>
-                  <button className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
-                    Learn more
-                  </button>
-                </div>
-              </div>
-
-              {/* Message Input */}
-              <div className="border-t border-gray-200 bg-white p-4">
-                <div className="flex items-end space-x-3">
-                  <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
-                    <Plus className="w-4 h-4" />
-                  </button>
-                  <div className="flex-1 relative">
-                    <input
-                      type="text"
-                      placeholder="Reply, press 'space' for AI, '/' for commands"
-                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    />
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center space-x-1">
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Paperclip className="w-3 h-3" />
-                      </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Smile className="w-3 h-3" />
-                      </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Send className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-              )
-            }
             </div>
           ) : activeSidebarItem === 'followups' ? (
             /* FollowUps Page Content */
@@ -1500,15 +1406,91 @@ export const Chat: React.FC = () => {
             </div>
           ) : activeSidebarItem === 'activity' ? (
             /* Activity Page Content */
-            <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gray-50">
-              <div className="text-center">
-                <div className="w-24 h-24 mx-auto mb-4 bg-gray-200 rounded-full flex items-center justify-center">
-                  <Activity className="w-8 h-8 text-gray-400" />
+            <div className="flex-1 flex flex-col bg-white">
+              {/* Activity Header */}
+              <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Activity</h2>
+                
+                {/* Filter Tabs */}
+                <div className="flex space-x-1">
+                  <button
+                    onClick={() => setActivityTab('mentions')}
+                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                      activityTab === 'mentions'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <AtSign className="w-4 h-4" />
+                    <span>Mentions</span>
+                  </button>
+                  <button
+                    onClick={() => setActivityTab('reactions')}
+                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                      activityTab === 'reactions'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <span>😊</span>
+                    <span>Reactions</span>
+                  </button>
+                  <button
+                    onClick={() => setActivityTab('assigned')}
+                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                      activityTab === 'assigned'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>Assigned to me</span>
+                  </button>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Activity</h3>
-                <p className="text-gray-600">
-                  Activity tracking is coming soon. Stay tuned for updates!
-                </p>
+              </div>
+
+              {/* Content Area */}
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+                {activityTab === 'mentions' ? (
+                  /* Mentions Content */
+                  <div className="flex-1 flex items-center justify-center p-12">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <AtSign className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No mentions yet</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        When someone mentions you, it will appear here.
+                      </p>
+                    </div>
+                  </div>
+                ) : activityTab === 'reactions' ? (
+                  /* Reactions Content */
+                  <div className="flex-1 flex items-center justify-center p-12">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <span className="text-2xl">😊</span>
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No reactions yet</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        When people react to your messages, it will appear here.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  /* Assigned to me Content */
+                  <div className="flex-1 flex items-center justify-center p-12">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <UserPlus className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No assignments yet</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        When tasks are assigned to you, they will appear here.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : activeSidebarItem === 'drafts' ? (
@@ -1594,27 +1576,6 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
 
-              {/* Upgrade notice banner - only for sent tab */}
-              {draftsTab === 'sent' && (
-                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-white text-xs">!</span>
-                      </div>
-                      <span className="text-sm text-blue-900">
-                        Need to see older messages? Upgrade to access your full Chat history.
-                      </span>
-                    </div>
-                    <button 
-                      onClick={() => setShowUpgradeModal(true)}
-                      className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
-                    >
-                      Learn more
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Table Header */}
               <div className="px-6 py-3 bg-white border-b border-gray-200">
@@ -1629,7 +1590,7 @@ export const Chat: React.FC = () => {
               </div>
 
               {/* Content Area */}
-              <div className="flex-1 overflow-y-auto max-h-[60vh]">
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-300px)] min-h-0">
                 {draftsTab === 'drafts' ? (
                   /* Drafts Content */
                   drafts.length === 0 || (draftsSearchQuery && searchDrafts(draftsSearchQuery).length === 0) ? (
