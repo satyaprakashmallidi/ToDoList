@@ -30,9 +30,13 @@ import {
   Mic,
   Video,
   X,
-  MoreHorizontal
+  MoreHorizontal,
+  Clock,
+  Trash2,
+  Eye
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useDrafts } from '../contexts/DraftContext';
 import { supabase } from '../lib/supabase';
 
 interface Channel {
@@ -86,6 +90,20 @@ interface SidebarItem {
 
 export const Chat: React.FC = () => {
   const { user } = useAuth();
+  const { 
+    drafts, 
+    sentMessages, 
+    scheduledMessages,
+    addDraft, 
+    updateDraft, 
+    deleteDraft, 
+    sendDraft,
+    addScheduledMessage,
+    cancelScheduledMessage,
+    searchDrafts,
+    searchSent,
+    searchScheduled
+  } = useDrafts();
   const [repliesTab, setRepliesTab] = useState<'unread' | 'read'>('unread');
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [selectedDM, setSelectedDM] = useState<string | null>(null);
@@ -110,6 +128,13 @@ export const Chat: React.FC = () => {
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const presenceChannelRef = useRef<any>(null);
+  
+  // Drafts & Sent state
+  const [draftsTab, setDraftsTab] = useState<'drafts' | 'sent' | 'scheduled'>('drafts');
+  const [draftsSearchQuery, setDraftsSearchQuery] = useState('');
+  const [editingDraft, setEditingDraft] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   // Sidebar items for replies section
   const sidebarItems: SidebarItem[] = [
@@ -407,6 +432,8 @@ export const Chat: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
+
+
   const handleSendMessage = () => {
     if (messageInput.trim()) {
       const newMessage: Message = {
@@ -444,11 +471,11 @@ export const Chat: React.FC = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-2rem)] sm:h-[calc(100vh-3rem)] w-full flex bg-gray-50 -m-4 sm:-m-6">
+    <div className="h-screen w-full flex bg-gray-50 -m-4 sm:-m-6">
       {/* Left Sidebar */}
-      <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col">
+      <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col h-full">
         {/* Single Chat Header */}
-        <div className="px-4 py-3 border-b border-gray-200 bg-white">
+        <div className="px-6 py-4 border-b border-gray-200 bg-white">
           <div className="flex items-center">
             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center mr-2">
               <Reply className="w-3 h-3 text-white" />
@@ -581,7 +608,7 @@ export const Chat: React.FC = () => {
           </div>
 
         {/* Bottom User Section */}
-        <div className="p-3 border-t border-gray-200 bg-white">
+        <div className="p-3 border-t border-gray-200 bg-gray-100">
           <div className="flex items-center">
             <div className="relative">
               <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
@@ -1485,16 +1512,316 @@ export const Chat: React.FC = () => {
               </div>
             </div>
           ) : activeSidebarItem === 'drafts' ? (
-            /* Drafts Page Content */
-            <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gray-50">
-              <div className="text-center">
-                <div className="w-24 h-24 mx-auto mb-4 bg-gray-200 rounded-full flex items-center justify-center">
-                  <Edit3 className="w-8 h-8 text-gray-400" />
+            /* Drafts & Sent Page Content */
+            <div className="flex-1 flex flex-col bg-white">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
+                    <Edit3 className="w-4 h-4 text-white" />
+                  </div>
+                  <h2 className="text-xl font-semibold text-gray-900">Drafts & Sent</h2>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Drafts & Sent</h3>
-                <p className="text-gray-600">
-                  Your drafts and sent messages will appear here.
-                </p>
+                
+                {/* Tabs */}
+                <div className="flex space-x-6">
+                  <button
+                    onClick={() => setDraftsTab('drafts')}
+                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      draftsTab === 'drafts'
+                        ? 'text-gray-900 border-purple-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
+                    }`}
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span>Drafts</span>
+                  </button>
+                  <button
+                    onClick={() => setDraftsTab('sent')}
+                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      draftsTab === 'sent'
+                        ? 'text-gray-900 border-purple-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
+                    }`}
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>Sent</span>
+                  </button>
+                  <button
+                    onClick={() => setDraftsTab('scheduled')}
+                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      draftsTab === 'scheduled'
+                        ? 'text-gray-900 border-purple-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>Scheduled</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div className="px-6 py-4 border-b border-gray-200">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder={
+                      draftsTab === 'drafts' ? 'Search drafts...' :
+                      draftsTab === 'sent' ? 'Search sent...' :
+                      'Search scheduled messages...'
+                    }
+                    value={draftsSearchQuery}
+                    onChange={(e) => setDraftsSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Thread indicator and Sent by filter */}
+              <div className="px-6 py-2 bg-gray-50">
+                <div className="flex items-center space-x-2">
+                  <div className="inline-flex items-center space-x-2 px-2 py-1 bg-gray-200 rounded text-xs text-gray-600">
+                    <MessageSquare className="w-3 h-3" />
+                    <span>In thread</span>
+                  </div>
+                  {draftsTab === 'sent' && (
+                    <div className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+                      <span>Sent by: You</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Upgrade notice banner - only for sent tab */}
+              {draftsTab === 'sent' && (
+                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-white text-xs">!</span>
+                      </div>
+                      <span className="text-sm text-blue-900">
+                        Need to see older messages? Upgrade to access your full Chat history.
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => setShowUpgradeModal(true)}
+                      className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+                    >
+                      Learn more
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Table Header */}
+              <div className="px-6 py-3 bg-white border-b border-gray-200">
+                <div className="grid grid-cols-3 gap-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <div>Location</div>
+                  <div>Message</div>
+                  <div>
+                    {draftsTab === 'sent' ? 'Sent' : 
+                     draftsTab === 'scheduled' ? 'Send' : 'Updated'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Content Area */}
+              <div className="flex-1 overflow-y-auto max-h-[60vh]">
+                {draftsTab === 'drafts' ? (
+                  /* Drafts Content */
+                  drafts.length === 0 || (draftsSearchQuery && searchDrafts(draftsSearchQuery).length === 0) ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-12">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                        <Edit3 className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No drafts</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        Drafts are saved messages that you have not sent yet.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {(draftsSearchQuery ? searchDrafts(draftsSearchQuery) : drafts).map((draft) => (
+                        <div key={draft.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                          <div className="grid grid-cols-3 gap-4 items-start">
+                            <div className="flex items-center space-x-2">
+                              <Hash className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm text-gray-900 truncate">{draft.location}</span>
+                            </div>
+                            <div className="flex-1">
+                              {editingDraft === draft.id ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    value={editingContent}
+                                    onChange={(e) => setEditingContent(e.target.value)}
+                                    className="w-full p-2 border border-gray-300 rounded text-sm resize-none"
+                                    rows={2}
+                                  />
+                                  <div className="flex space-x-2">
+                                    <button
+                                      onClick={() => {
+                                        updateDraft(draft.id, editingContent);
+                                        setEditingDraft(null);
+                                        setEditingContent('');
+                                      }}
+                                      className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        sendDraft(draft.id);
+                                        setEditingDraft(null);
+                                        setEditingContent('');
+                                      }}
+                                      className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                                    >
+                                      Send
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setEditingDraft(null);
+                                        setEditingContent('');
+                                      }}
+                                      className="px-3 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between group">
+                                  <p className="text-sm text-gray-900 flex-1 pr-4">{draft.message}</p>
+                                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1">
+                                    <button
+                                      onClick={() => {
+                                        setEditingDraft(draft.id);
+                                        setEditingContent(draft.message);
+                                      }}
+                                      className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                                      title="Edit draft"
+                                    >
+                                      <Edit3 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => sendDraft(draft.id)}
+                                      className="p-1 text-gray-400 hover:text-blue-600 rounded"
+                                      title="Send draft"
+                                    >
+                                      <Send className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteDraft(draft.id)}
+                                      className="p-1 text-gray-400 hover:text-red-600 rounded"
+                                      title="Delete draft"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {new Date(draft.lastUpdated).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : draftsTab === 'sent' ? (
+                  /* Sent Messages Content */
+                  sentMessages.length === 0 || (draftsSearchQuery && searchSent(draftsSearchQuery).length === 0) ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-12">
+                      <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+                        <div className="w-10 h-10 border-2 border-gray-400 rounded-full flex items-center justify-center">
+                          <div className="w-4 h-4 bg-gray-400 rounded-full transform rotate-45"></div>
+                        </div>
+                      </div>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        Looks like you don't have any sent messages
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {(draftsSearchQuery ? searchSent(draftsSearchQuery) : sentMessages).map((message) => (
+                        <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                          <div className="grid grid-cols-3 gap-4 items-start">
+                            <div className="flex items-center space-x-2">
+                              <Hash className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm text-gray-900 truncate">{message.location}</span>
+                            </div>
+                            <div className="flex items-start justify-between group">
+                              <p className="text-sm text-gray-900 flex-1 pr-4">{message.message}</p>
+                              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                                  title="View message"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {new Date(message.sentAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  /* Scheduled Messages Content */
+                  scheduledMessages.length === 0 || (draftsSearchQuery && searchScheduled(draftsSearchQuery).length === 0) ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-12">
+                      <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+                        <Clock className="w-10 h-10 text-gray-400" />
+                      </div>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2">No scheduled messages</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        Looks like you don't have any scheduled messages
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {(draftsSearchQuery ? searchScheduled(draftsSearchQuery) : scheduledMessages).map((message) => (
+                        <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                          <div className="grid grid-cols-3 gap-4 items-start">
+                            <div className="flex items-center space-x-2">
+                              <Hash className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm text-gray-900 truncate">{message.location}</span>
+                            </div>
+                            <div className="flex items-start justify-between group">
+                              <p className="text-sm text-gray-900 flex-1 pr-4">{message.message}</p>
+                              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1">
+                                <button
+                                  onClick={() => cancelScheduledMessage(message.id)}
+                                  className="p-1 text-gray-400 hover:text-red-600 rounded"
+                                  title="Cancel scheduled message"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                                <button
+                                  className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                                  title="Edit schedule"
+                                >
+                                  <Clock className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {new Date(message.scheduledFor).toLocaleDateString()} at {new Date(message.scheduledFor).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                )}
               </div>
             </div>
           ) : (
@@ -1747,6 +2074,67 @@ export const Chat: React.FC = () => {
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Add {selectedMembers.length > 0 ? `${selectedMembers.length} ${selectedMembers.length === 1 ? 'person' : 'people'}` : ''}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upgrade Modal */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">Upgrade Your Plan</h2>
+                <button
+                  onClick={() => setShowUpgradeModal(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="mb-6">
+                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4 mx-auto">
+                  <Send className="w-8 h-8 text-blue-600" />
+                </div>
+                <p className="text-gray-600 text-center mb-4">
+                  Access your full chat history and unlock premium features with our Pro plan.
+                </p>
+                <ul className="text-sm text-gray-600 space-y-2">
+                  <li className="flex items-center">
+                    <div className="w-4 h-4 bg-green-500 rounded-full mr-2"></div>
+                    Unlimited chat history
+                  </li>
+                  <li className="flex items-center">
+                    <div className="w-4 h-4 bg-green-500 rounded-full mr-2"></div>
+                    Advanced search features
+                  </li>
+                  <li className="flex items-center">
+                    <div className="w-4 h-4 bg-green-500 rounded-full mr-2"></div>
+                    Priority support
+                  </li>
+                </ul>
+              </div>
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setShowUpgradeModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Not now
+                </button>
+                <button
+                  onClick={() => {
+                    // Here you would integrate with your payment system
+                    alert('Redirect to upgrade page...');
+                    setShowUpgradeModal(false);
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Upgrade Now
                 </button>
               </div>
             </div>

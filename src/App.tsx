@@ -3,6 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { TimeStoreProvider } from './contexts/TimeStore'
 import { TaskStoreProvider } from './contexts/TaskStore'
+import { NotificationProvider } from './contexts/NotificationContext'
+import { DraftProvider } from './contexts/DraftContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar } from './components/Sidebar'
@@ -136,9 +138,11 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <TimeStoreProvider>
-          <TaskStoreProvider>
-            <Router>
+        <NotificationProvider>
+          <DraftProvider>
+            <TimeStoreProvider>
+              <TaskStoreProvider>
+                <Router>
               <Routes>
                 <Route path="/login" element={
                   <PublicRoute>
@@ -177,6 +181,8 @@ function App() {
             </Router>
           </TaskStoreProvider>
         </TimeStoreProvider>
+      </DraftProvider>
+      </NotificationProvider>
       </AuthProvider>
     </ErrorBoundary>
   )

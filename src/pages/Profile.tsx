@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useNotifications } from '../contexts/NotificationContext'
 import { useSupabase } from '../hooks/useSupabase'
 import { 
   LogOut, 
@@ -20,6 +22,15 @@ import {
 export const Profile: React.FC = () => {
   const { user, signOut } = useAuth()
   const { supabase } = useSupabase()
+  const navigate = useNavigate()
+  const { 
+    notifications, 
+    unreadCount, 
+    markAsRead, 
+    markAllAsRead, 
+    clearAllNotifications,
+    addNotification
+  } = useNotifications()
   
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -47,8 +58,6 @@ export const Profile: React.FC = () => {
   
   // Notification state
   const [showNotifications, setShowNotifications] = useState(false)
-  const [notifications, setNotifications] = useState<any[]>([])
-  const [unreadCount, setUnreadCount] = useState(0)
 
   // Load current profile data
   useEffect(() => {
@@ -148,78 +157,6 @@ export const Profile: React.FC = () => {
     loadProfile()
   }, [user, supabase])
 
-  // Load notifications
-  useEffect(() => {
-    const loadNotifications = async () => {
-      if (!user) return
-      
-      // First try to load existing notifications from localStorage
-      const storedNotifications = localStorage.getItem(`notifications_${user.id}`)
-      
-      if (storedNotifications) {
-        try {
-          const parsed = JSON.parse(storedNotifications)
-          setNotifications(parsed)
-          setUnreadCount(parsed.filter((n: any) => !n.is_read).length)
-          return
-        } catch (e) {
-          console.log('Error parsing stored notifications')
-        }
-      }
-      
-      // If no stored notifications, create sample ones
-      const sampleNotifications = [
-        {
-          id: '1',
-          type: 'message',
-          title: 'New message from Team',
-          content: 'Hey, can you review the latest task updates?',
-          source_user_name: 'John Doe',
-          is_read: false,
-          created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(), // 5 mins ago
-          link: '/app/chats'
-        },
-        {
-          id: '2',
-          type: 'task',
-          title: 'Task assigned to you',
-          content: 'Complete the profile page implementation',
-          source_user_name: 'System',
-          is_read: false,
-          created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(), // 30 mins ago
-          link: '/app/tasks'
-        },
-        {
-          id: '3',
-          type: 'channel',
-          title: 'New channel created',
-          content: 'You\'ve been added to #general channel',
-          source_user_name: 'Admin',
-          is_read: true,
-          created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(), // 2 hours ago
-          link: '/app/chats'
-        },
-        {
-          id: '4',
-          type: 'like',
-          title: 'Your post was liked',
-          content: 'Sarah liked your post about React hooks',
-          source_user_name: 'Sarah Smith',
-          is_read: true,
-          created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
-          link: '/app/chats'
-        }
-      ]
-      
-      // Store in localStorage for persistence
-      localStorage.setItem(`notifications_${user.id}`, JSON.stringify(sampleNotifications))
-      
-      setNotifications(sampleNotifications)
-      setUnreadCount(sampleNotifications.filter(n => !n.is_read).length)
-    }
-    
-    loadNotifications()
-  }, [user])
 
   const handleUpdateProfile = async () => {
     if (!user) return
@@ -439,26 +376,14 @@ export const Profile: React.FC = () => {
     })
   }
 
-  const markNotificationAsRead = (notificationId: string) => {
-    const updatedNotifications = notifications.map(n => 
-      n.id === notificationId ? { ...n, is_read: true } : n
-    )
-    setNotifications(updatedNotifications)
-    setUnreadCount(updatedNotifications.filter(n => !n.is_read).length)
-    localStorage.setItem(`notifications_${user!.id}`, JSON.stringify(updatedNotifications))
-  }
-
-  const markAllAsRead = () => {
-    const updatedNotifications = notifications.map(n => ({ ...n, is_read: true }))
-    setNotifications(updatedNotifications)
-    setUnreadCount(0)
-    localStorage.setItem(`notifications_${user!.id}`, JSON.stringify(updatedNotifications))
-  }
-
-  const clearAllNotifications = () => {
-    setNotifications([])
-    setUnreadCount(0)
-    localStorage.removeItem(`notifications_${user!.id}`)
+  const handleNotificationClick = (notification: any) => {
+    if (!notification.read) {
+      markAsRead(notification.id)
+    }
+    if (notification.redirectPath) {
+      navigate(notification.redirectPath)
+      setShowNotifications(false)
+    }
   }
 
   const getNotificationIcon = (type: string) => {
@@ -544,9 +469,9 @@ export const Profile: React.FC = () => {
                         notifications.map((notification) => (
                           <div 
                             key={notification.id}
-                            onClick={() => !notification.is_read && markNotificationAsRead(notification.id)}
+                            onClick={() => handleNotificationClick(notification)}
                             className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${
-                              !notification.is_read ? 'bg-blue-50' : ''
+                              !notification.read ? 'bg-blue-50' : ''
                             }`}
                           >
                             <div className="flex items-start space-x-3">
@@ -567,10 +492,10 @@ export const Profile: React.FC = () => {
                                   {notification.content}
                                 </p>
                                 <p className="text-xs text-gray-500 mt-2">
-                                  {notification.source_user_name} • {getTimeAgo(notification.created_at)}
+                                  {notification.sender || 'System'} • {getTimeAgo(notification.timestamp)}
                                 </p>
                               </div>
-                              {!notification.is_read && (
+                              {!notification.read && (
                                 <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
                               )}
                             </div>
