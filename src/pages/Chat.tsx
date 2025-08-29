@@ -34,10 +34,14 @@ import {
   MoreHorizontal,
   Clock,
   Trash2,
-  Eye
+  Eye,
+  Heart,
+  Laugh,
+  Frown,
+  Angry,
+  ThumbsUp
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useDrafts } from '../contexts/DraftContext';
 import { useChannels } from '../hooks/useChannels';
 import { ChannelCreateModal } from '../components/ChannelCreateModal';
 import { supabase } from '../lib/supabase';
@@ -93,20 +97,6 @@ interface SidebarItem {
 
 export const Chat: React.FC = () => {
   const { user } = useAuth();
-  const { 
-    drafts, 
-    sentMessages, 
-    scheduledMessages,
-    addDraft, 
-    updateDraft, 
-    deleteDraft, 
-    sendDraft,
-    addScheduledMessage,
-    cancelScheduledMessage,
-    searchDrafts,
-    searchSent,
-    searchScheduled
-  } = useDrafts();
   const {
     channels: dbChannels,
     channelMessages,
@@ -123,10 +113,22 @@ export const Chat: React.FC = () => {
     loadDirectMessages,
     getOrCreateDirectConversation,
     loadChannelPosts,
-    createChannelPost
+    createChannelPost,
+    togglePostReaction,
+    getPostReactions,
+    addPostComment,
+    getPostComments,
+    markMessageAsRead,
+    markChannelMessagesAsRead,
+    markDirectMessagesAsRead,
+    getUnreadReplies,
+    getReadReplies,
+    getSentMessages
   } = useChannels();
   const [repliesTab, setRepliesTab] = useState<'unread' | 'read'>('unread');
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [unreadReplies, setUnreadReplies] = useState<any[]>([]);
+  const [readReplies, setReadReplies] = useState<any[]>([]);
   const [selectedDM, setSelectedDM] = useState<string | null>(null);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
@@ -150,15 +152,20 @@ export const Chat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const presenceChannelRef = useRef<any>(null);
   
-  // Drafts & Sent state
-  const [draftsTab, setDraftsTab] = useState<'drafts' | 'sent' | 'scheduled'>('drafts');
-  const [draftsSearchQuery, setDraftsSearchQuery] = useState('');
-  const [editingDraft, setEditingDraft] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState('');
+  // Sent Messages state
+  const [sentSearchQuery, setSentSearchQuery] = useState('');
+  const [sentMessages, setSentMessages] = useState<any[]>([]);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  
+  // Post reactions and comments state
+  const [postReactions, setPostReactions] = useState<Record<string, any[]>>({});
+  const [postComments, setPostComments] = useState<Record<string, any[]>>({});
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [showComments, setShowComments] = useState<Record<string, boolean>>({});
   
   // Activity state
   const [activityTab, setActivityTab] = useState<'mentions' | 'reactions' | 'assigned'>('mentions');
+  const [activityReactions, setActivityReactions] = useState<any[]>([]);
 
   // Sidebar items for replies section
   const sidebarItems: SidebarItem[] = [
@@ -166,7 +173,7 @@ export const Chat: React.FC = () => {
     { id: 'posts', label: 'Posts', icon: <FileText className="w-4 h-4" /> },
     { id: 'followups', label: 'FollowUps', icon: <Users className="w-4 h-4" /> },
     { id: 'activity', label: 'Activity', icon: <Activity className="w-4 h-4" /> },
-    { id: 'drafts', label: 'Drafts & Sent', icon: <Edit3 className="w-4 h-4" />, count: 1 }
+    { id: 'drafts', label: 'Sent Messages', icon: <Edit3 className="w-4 h-4" /> }
   ];
 
   // Fetch team members when component mounts and setup presence
@@ -179,7 +186,12 @@ export const Chat: React.FC = () => {
     return () => {
       // Cleanup presence subscription
       if (presenceChannelRef.current) {
-        supabase.removeChannel(presenceChannelRef.current);
+        if (presenceChannelRef.current.cleanup) {
+          presenceChannelRef.current.cleanup();
+        }
+        if (presenceChannelRef.current.channel) {
+          supabase.removeChannel(presenceChannelRef.current.channel);
+        }
       }
     };
   }, [user]);
@@ -251,10 +263,12 @@ export const Chat: React.FC = () => {
 
   // Setup real-time presence tracking
   const setupPresence = () => {
+    if (!user?.id) return;
+    
     const channel = supabase.channel('online-users', {
       config: {
         presence: {
-          key: user?.id || ''
+          key: user.id
         }
       }
     });
@@ -262,6 +276,7 @@ export const Chat: React.FC = () => {
     // Track current user's presence
     channel
       .on('presence', { event: 'sync' }, () => {
+        console.log('Presence sync triggered');
         const state = channel.presenceState();
         const onlineUserIds = new Set<string>();
         
@@ -271,12 +286,15 @@ export const Chat: React.FC = () => {
           }
         });
         
+        console.log('Online users updated:', onlineUserIds);
         setOnlineUsers(onlineUserIds);
       })
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        console.log('User joined:', key);
         setOnlineUsers(prev => new Set([...prev, key]));
       })
       .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+        console.log('User left:', key);
         setOnlineUsers(prev => {
           const updated = new Set(prev);
           updated.delete(key);
@@ -284,16 +302,50 @@ export const Chat: React.FC = () => {
         });
       })
       .subscribe(async (status) => {
+        console.log('Presence subscription status:', status);
         if (status === 'SUBSCRIBED') {
           // Track this user as online
           await channel.track({
             online_at: new Date().toISOString(),
-            user_id: user?.id
+            user_id: user.id,
+            status: 'online'
           });
+          console.log('Started tracking presence for user:', user.id);
         }
       });
 
-    presenceChannelRef.current = channel;
+    // Clean up on browser close/beforeunload
+    const handleBeforeUnload = async () => {
+      console.log('Browser closing, untracking presence');
+      await channel.untrack();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // Also untrack when page becomes hidden (mobile/tab switching)
+    const handleVisibilityChange = async () => {
+      if (document.hidden) {
+        console.log('Page hidden, untracking presence');
+        await channel.untrack();
+      } else {
+        console.log('Page visible, tracking presence again');
+        await channel.track({
+          online_at: new Date().toISOString(),
+          user_id: user.id,
+          status: 'online'
+        });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    presenceChannelRef.current = {
+      channel,
+      cleanup: () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   };
 
   // Get status for a team member
@@ -341,21 +393,37 @@ export const Chat: React.FC = () => {
   };
 
   // Handle adding members to channel
-  const handleAddMembers = () => {
+  const handleAddMembers = async () => {
     if (selectedChannel && selectedMembers.length > 0) {
-      const membersToAdd = teamMembers.filter(member => selectedMembers.includes(member.id));
-      const updatedChannel = {
-        ...selectedChannel,
-        members: [...(selectedChannel.members || []), ...membersToAdd],
-        memberCount: (selectedChannel.memberCount || 0) + selectedMembers.length
-      };
-      
-      // Note: Channel updates would be handled by the database and real-time subscriptions
-      setSelectedChannel(updatedChannel);
-      
-      // Reset selection and close modal
-      setSelectedMembers([]);
-      setShowAddMembersModal(false);
+      try {
+        console.log('Adding members to channel:', selectedChannel.id, selectedMembers);
+        
+        // Add members to the channel in the database
+        const success = await addChannelMembers(selectedChannel.id, selectedMembers);
+        
+        if (success) {
+          console.log('Members added successfully');
+          
+          // Update local state optimistically
+          const membersToAdd = teamMembers.filter(member => selectedMembers.includes(member.id));
+          const updatedChannel = {
+            ...selectedChannel,
+            members: [...(selectedChannel.members || []), ...membersToAdd],
+            memberCount: (selectedChannel.memberCount || 0) + selectedMembers.length
+          };
+          
+          setSelectedChannel(updatedChannel);
+          
+          // Reset selection and close modal
+          setSelectedMembers([]);
+          setShowAddMembersModal(false);
+        } else {
+          console.error('Failed to add members to channel');
+          // You could add a toast notification here
+        }
+      } catch (error) {
+        console.error('Error adding members:', error);
+      }
     }
   };
 
@@ -402,10 +470,180 @@ export const Chat: React.FC = () => {
     }
   }, [selectedChannel, channelView, loadChannelPosts]);
 
+  // Auto-select first channel when opening posts section
+  useEffect(() => {
+    console.log('Auto-select channel effect triggered:', { activeSidebarItem, selectedChannel, dbChannels });
+    if (activeSidebarItem === 'posts' && !selectedChannel && dbChannels.length > 0) {
+      console.log('Auto-selecting first channel for posts:', dbChannels[0]);
+      setSelectedChannel({
+        id: dbChannels[0].id,
+        name: dbChannels[0].name,
+        type: dbChannels[0].channel_type as 'text' | 'voice',
+        description: dbChannels[0].description || undefined,
+        memberCount: dbChannels[0].member_count || 1
+      });
+      setActiveSidebarItem('posts');
+    }
+  }, [activeSidebarItem, selectedChannel, dbChannels]);
+
+  // Load posts when navigating to main posts page
+  useEffect(() => {
+    console.log('Main posts page effect triggered:', { activeSidebarItem, selectedChannel });
+    if (activeSidebarItem === 'posts' && selectedChannel) {
+      console.log('Loading posts for main posts page:', selectedChannel.id);
+      loadChannelPosts(selectedChannel.id);
+    }
+  }, [activeSidebarItem, selectedChannel, loadChannelPosts]);
+
+  // Load replies when replies tab is active
+  useEffect(() => {
+    const loadReplies = async () => {
+      if (activeSidebarItem === 'replies') {
+        console.log('Loading replies for replies tab');
+        try {
+          const [unread, read] = await Promise.all([
+            getUnreadReplies(),
+            getReadReplies()
+          ]);
+          setUnreadReplies(unread);
+          setReadReplies(read);
+        } catch (error) {
+          console.error('Failed to load replies:', error);
+        }
+      }
+    };
+
+    loadReplies();
+  }, [activeSidebarItem, getUnreadReplies, getReadReplies]);
+
+  // Load sent messages when drafts tab is active
+  useEffect(() => {
+    const loadSentMessages = async () => {
+      if (activeSidebarItem === 'drafts') {
+        console.log('Loading sent messages for drafts tab');
+        try {
+          const sent = await getSentMessages();
+          setSentMessages(sent);
+          console.log('Sent messages loaded:', sent.length);
+        } catch (error) {
+          console.error('Failed to load sent messages:', error);
+        }
+      }
+    };
+
+    loadSentMessages();
+  }, [activeSidebarItem, getSentMessages]);
+
+  // Search function for sent messages
+  const searchSent = (query: string) => {
+    if (!query.trim()) return sentMessages;
+    return sentMessages.filter(message => 
+      message.content?.toLowerCase().includes(query.toLowerCase()) ||
+      message.location_name?.toLowerCase().includes(query.toLowerCase())
+    );
+  };
+
+  // Function to handle marking a reply as read
+  const handleMarkReplyAsRead = async (messageId: string) => {
+    try {
+      await markMessageAsRead(messageId);
+      // Refresh replies to update the read/unread lists
+      const [unread, read] = await Promise.all([
+        getUnreadReplies(),
+        getReadReplies()
+      ]);
+      setUnreadReplies(unread);
+      setReadReplies(read);
+    } catch (error) {
+      console.error('Failed to mark reply as read:', error);
+    }
+  };
+
+  // Function to navigate to a message
+  const handleNavigateToMessage = async (message: any) => {
+    try {
+      console.log('=== NAVIGATION DEBUG ===');
+      console.log('Message object:', message);
+      console.log('Message type:', message.message_type);
+      console.log('Channel ID:', message.channel_id);
+      console.log('Conversation ID:', message.conversation_id);
+      console.log('Sender ID:', message.sender_id);
+      console.log('Available channels:', dbChannels);
+      console.log('Available direct messages:', availableDirectMessages);
+      console.log('Current state - selectedChannel:', selectedChannel?.id);
+      console.log('Current state - selectedDM:', selectedDM);
+      console.log('Current state - activeSidebarItem:', activeSidebarItem);
+      
+      if (message.message_type === 'direct' || message.conversation_id) {
+        console.log('Processing as DIRECT MESSAGE');
+        
+        if (message.conversation_id) {
+          console.log('Setting sidebar to dm and clearing channel selection...');
+          setActiveSidebarItem('dm');
+          setSelectedChannel(null);
+          
+          // For sent messages, we need to find the recipient, not the sender
+          const recipientId = message.recipient_id || message.sender_id;
+          const recipient = availableDirectMessages.find(dm => dm.id === recipientId);
+          console.log('Looking for recipient with ID:', recipientId);
+          console.log('Found recipient:', recipient);
+          
+          if (recipient) {
+            console.log('Setting selected DM to:', recipient.id);
+            setSelectedDM(recipient.id);
+            setCurrentConversationId(message.conversation_id);
+            console.log('Loading direct messages for conversation:', message.conversation_id);
+            await loadDirectMessages(message.conversation_id);
+          } else {
+            console.log('Recipient not found, loading conversation directly');
+            // If we can't find the recipient in available DMs, we still need to set a selectedDM
+            // Use the recipient_id or fallback to sender_id
+            setSelectedDM(recipientId);
+            setCurrentConversationId(message.conversation_id);
+            await loadDirectMessages(message.conversation_id);
+          }
+        }
+      } else if (message.message_type === 'channel' || message.channel_id) {
+        console.log('Processing as CHANNEL MESSAGE');
+        
+        if (message.channel_id) {
+          console.log('Setting sidebar to channel and clearing DM selection...');
+          setActiveSidebarItem('channel');
+          setSelectedDM(null);
+          
+          // Find the channel
+          const channel = dbChannels.find(c => c.id === message.channel_id);
+          console.log('Looking for channel with ID:', message.channel_id);
+          console.log('Found channel:', channel);
+          
+          if (channel) {
+            console.log('Setting selected channel to:', channel);
+            setSelectedChannel(channel);
+            console.log('Loading channel messages for channel:', message.channel_id);
+            await loadChannelMessages(message.channel_id);
+          } else {
+            console.log('Channel not found in available channels!');
+          }
+        }
+      } else {
+        console.log('Unknown message type or missing identifiers');
+      }
+      
+      // Mark as read when navigating
+      console.log('Marking message as read...');
+      await handleMarkReplyAsRead(message.id);
+      console.log('=== NAVIGATION COMPLETE ===');
+    } catch (error) {
+      console.error('Failed to navigate to message:', error);
+    }
+  };
+
   // Get current messages based on selected view
   const currentMessages = selectedChannel 
     ? channelMessages[selectedChannel.id] || []
     : (currentConversationId ? directMessages[currentConversationId] || [] : []);
+
+  console.log('currentMessages:', currentMessages);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -415,7 +653,274 @@ export const Chat: React.FC = () => {
     scrollToBottom();
   }, [currentMessages]);
 
+  // TEMPORARILY DISABLED: Auto-mark channel messages as read when viewing
+  // useEffect(() => {
+  //   if (selectedChannel && activeSidebarItem === 'chat' && currentMessages.length > 0) {
+  //     // Mark channel messages as read when viewing them
+  //     markChannelMessagesAsRead(selectedChannel.id);
+  //   }
+  // }, [selectedChannel, activeSidebarItem, currentMessages.length, markChannelMessagesAsRead]);
 
+  // TEMPORARILY DISABLED: Auto-mark messages as read when viewing conversations
+  // This was causing navigation issues due to RLS policy errors
+  // Will re-enable after navigation is working properly
+  
+  // // Auto-mark direct messages as read when viewing a DM conversation
+  // useEffect(() => {
+  //   if (currentConversationId && !selectedChannel && activeSidebarItem === 'chat' && currentMessages.length > 0) {
+  //     console.log('Auto-marking direct messages as read for conversation:', currentConversationId);
+  //     // Mark direct messages as read when viewing them
+  //     markDirectMessagesAsRead(currentConversationId);
+  //   }
+  // }, [currentConversationId, selectedChannel, activeSidebarItem, currentMessages.length, markDirectMessagesAsRead]);
+
+  // // Auto-mark channel messages as read when viewing a channel
+  // useEffect(() => {
+  //   if (selectedChannel && !selectedDM && activeSidebarItem === 'chat' && currentMessages.length > 0) {
+  //     console.log('Auto-marking channel messages as read for channel:', selectedChannel.id);
+  //     // Mark channel messages as read when viewing them
+  //     markChannelMessagesAsRead(selectedChannel.id);
+  //   }
+  // }, [selectedChannel?.id, selectedDM, activeSidebarItem, currentMessages.length, markChannelMessagesAsRead]);
+
+  // Handle post reaction
+  const handleReaction = async (postId: string, reactionType: 'like' | 'love' | 'laugh' | 'sad' | 'angry') => {
+    const success = await togglePostReaction(postId, reactionType);
+    if (success) {
+      // Reload reactions for this post immediately
+      const reactions = await getPostReactions(postId);
+      setPostReactions(prev => ({
+        ...prev,
+        [postId]: reactions
+      }));
+
+      // Also refresh activity reactions if we're on that tab
+      if (activeSidebarItem === 'activity' && activityTab === 'reactions') {
+        loadActivityReactions();
+      }
+    }
+  };
+
+  // Handle adding comment
+  const handleAddComment = async (postId: string) => {
+    const content = commentInputs[postId];
+    if (!content?.trim()) return;
+
+    const comment = await addPostComment(postId, content.trim());
+    if (comment) {
+      // Clear input
+      setCommentInputs(prev => ({
+        ...prev,
+        [postId]: ''
+      }));
+      
+      // Reload comments for this post
+      const comments = await getPostComments(postId);
+      setPostComments(prev => ({
+        ...prev,
+        [postId]: comments
+      }));
+    }
+  };
+
+  // Toggle comments visibility
+  const toggleComments = async (postId: string) => {
+    setShowComments(prev => ({
+      ...prev,
+      [postId]: !prev[postId]
+    }));
+    
+    // Load comments if showing for the first time
+    if (!showComments[postId] && !postComments[postId]) {
+      const comments = await getPostComments(postId);
+      setPostComments(prev => ({
+        ...prev,
+        [postId]: comments
+      }));
+    }
+  };
+
+  // Load reactions and comments for posts when they change
+  useEffect(() => {
+    const loadPostData = async () => {
+      if (selectedChannel && channelPosts[selectedChannel.id]) {
+        const posts = channelPosts[selectedChannel.id];
+        
+        // Load reactions for all posts (always refresh to get latest reactions)
+        for (const post of posts) {
+          const reactions = await getPostReactions(post.id);
+          setPostReactions(prev => ({
+            ...prev,
+            [post.id]: reactions
+          }));
+        }
+      }
+    };
+    
+    loadPostData();
+  }, [selectedChannel, channelPosts]); // Removed getPostReactions to avoid dependency issues
+
+  // Load activity reactions for current user's posts
+  const loadActivityReactions = async () => {
+    if (!user) {
+      return;
+    }
+
+
+    try {
+      // First, get all posts by the current user
+      const { data: userPosts, error: postsError } = await supabase
+        .from('posts')
+        .select('id, title, content, created_at, channel_id')
+        .eq('author_id', user.id)
+        .eq('is_published', true)
+        .order('created_at', { ascending: false });
+
+      if (postsError) {
+        console.error('Error fetching user posts:', postsError);
+        return;
+      }
+
+      console.log('Found user posts:', userPosts?.length || 0);
+
+      if (!userPosts || userPosts.length === 0) {
+        setActivityReactions([]);
+        return;
+      }
+
+      const postIds = userPosts.map(post => post.id);
+
+      // Get all reactions on user's posts (excluding user's own reactions)
+      const { data: reactions, error: reactionsError } = await supabase
+        .from('post_reactions')
+        .select('id, post_id, user_id, reaction_type, created_at')
+        .in('post_id', postIds)
+        .neq('user_id', user.id) // Exclude current user's own reactions
+        .order('created_at', { ascending: false });
+
+      if (reactionsError) {
+        console.error('Error fetching activity reactions:', reactionsError);
+        return;
+      }
+
+
+      if (!reactions || reactions.length === 0) {
+        setActivityReactions([]);
+        return;
+      }
+
+      // Get user profiles for reaction authors
+      const userIds = [...new Set(reactions.map(r => r.user_id))];
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, avatar_url')
+        .in('id', userIds);
+
+      if (profilesError) {
+        console.error('Error fetching profiles for activity reactions:', profilesError);
+      }
+
+      // Get channel names
+      const channelIds = [...new Set(userPosts.map(p => p.channel_id).filter(Boolean))];
+      const { data: channels, error: channelsError } = await supabase
+        .from('channels')
+        .select('id, name')
+        .in('id', channelIds);
+
+      if (channelsError) {
+        console.error('Error fetching channels for activity reactions:', channelsError);
+      }
+
+      // Merge all data
+      const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+      const postMap = new Map(userPosts.map(p => [p.id, p]));
+      const channelMap = new Map((channels || []).map(c => [c.id, c]));
+
+      const enrichedReactions = reactions.map(reaction => {
+        const post = postMap.get(reaction.post_id);
+        const profile = profileMap.get(reaction.user_id);
+        const channel = post ? channelMap.get(post.channel_id) : null;
+
+        return {
+          ...reaction,
+          post,
+          profile,
+          channel
+        };
+      });
+
+      setActivityReactions(enrichedReactions);
+    } catch (err) {
+      console.error('Failed to load activity reactions:', err);
+    }
+  };
+
+  // Load activity reactions when activity tab is opened
+  useEffect(() => {
+    if (activeSidebarItem === 'activity' && activityTab === 'reactions') {
+      loadActivityReactions();
+    }
+  }, [activeSidebarItem, activityTab, user]);
+
+
+  // Real-time reaction updates using Supabase subscriptions
+  useEffect(() => {
+    if (!selectedChannel || !channelPosts[selectedChannel.id]) return;
+
+    const posts = channelPosts[selectedChannel.id];
+    const postIds = posts.map(post => post.id);
+
+    // Subscribe to real-time changes on post_reactions table
+    console.log('Setting up real-time subscription for posts:', postIds);
+    const reactionSubscription = supabase
+      .channel(`post-reactions-${selectedChannel.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'post_reactions',
+          filter: `post_id=in.(${postIds.join(',')})`
+        },
+        async (payload) => {
+          console.log('🔥 REAL-TIME REACTION CHANGE DETECTED:', payload);
+          
+          // Refresh reactions for the affected post
+          const postId = payload.new?.post_id || payload.old?.post_id;
+          if (postId) {
+            const reactions = await getPostReactions(postId);
+            setPostReactions(prev => ({
+              ...prev,
+              [postId]: reactions
+            }));
+            
+            // Also refresh activity reactions if on that tab
+            if (activeSidebarItem === 'activity' && activityTab === 'reactions') {
+              loadActivityReactions();
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Real-time subscription status:', status);
+      });
+
+    // More aggressive periodic refresh to ensure cross-user sync
+    const refreshInterval = setInterval(async () => {
+      for (const post of posts) {
+        const reactions = await getPostReactions(post.id);
+        setPostReactions(prev => ({
+          ...prev,
+          [post.id]: reactions
+        }));
+      }
+    }, 5000); // Refresh every 5 seconds for testing
+
+    return () => {
+      supabase.removeChannel(reactionSubscription);
+      clearInterval(refreshInterval);
+    };
+  }, [selectedChannel, channelPosts, activeSidebarItem, activityTab]);
 
   const handleSendMessage = async () => {
     if (!messageInput.trim()) return;
@@ -957,18 +1462,134 @@ export const Chat: React.FC = () => {
                               )}
                               
                               {/* Post Actions */}
-                              <div className="flex items-center space-x-4 mt-4 pt-3 border-t border-gray-100">
-                                <button className="flex items-center text-gray-500 hover:text-gray-700">
-                                  <span className="mr-1">👍</span>
-                                  <span className="text-sm">Like</span>
-                                </button>
-                                <button className="flex items-center text-gray-500 hover:text-gray-700">
-                                  <Reply className="w-4 h-4 mr-1" />
-                                  <span className="text-sm">Reply</span>
-                                </button>
-                                <span className="text-sm text-gray-500">
-                                  {post.view_count || 0} views
-                                </span>
+                              <div className="mt-4 pt-3 border-t border-gray-100">
+                                {/* Reactions */}
+                                <div className="flex items-center space-x-1 mb-3">
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'like')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Like"
+                                  >
+                                    <ThumbsUp className="w-4 h-4 text-gray-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'love')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Love"
+                                  >
+                                    <Heart className="w-4 h-4 text-red-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'laugh')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Laugh"
+                                  >
+                                    <Laugh className="w-4 h-4 text-yellow-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'sad')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Sad"
+                                  >
+                                    <Frown className="w-4 h-4 text-blue-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'angry')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Angry"
+                                  >
+                                    <Angry className="w-4 h-4 text-red-600" />
+                                  </button>
+                                  <button 
+                                    onClick={() => toggleComments(post.id)}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors ml-4"
+                                  >
+                                    <MessageSquare className="w-4 h-4 mr-1" />
+                                    <span className="text-sm">Comment</span>
+                                  </button>
+                                  <span className="text-sm text-gray-500 ml-4">
+                                    {post.view_count || 0} views
+                                  </span>
+                                </div>
+
+                                {/* Reaction Summary */}
+                                {postReactions[post.id] && Array.isArray(postReactions[post.id]) && postReactions[post.id].length > 0 && (
+                                  <div className="flex items-center space-x-2 mb-3 text-sm text-gray-600">
+                                    {['like', 'love', 'laugh', 'sad', 'angry'].map(reactionType => {
+                                      const count = postReactions[post.id].filter((r: any) => (r.reaction_type || r.type) === reactionType).length;
+                                      if (count === 0) return null;
+                                      
+                                      const icons = {
+                                        like: <span>👍</span>,
+                                        love: <span>❤️</span>, 
+                                        laugh: <span>😂</span>,
+                                        sad: <span>😢</span>,
+                                        angry: <span>😡</span>
+                                      };
+                                      
+                                      return (
+                                        <span key={reactionType} className="flex items-center space-x-1 bg-gray-200 px-2 py-1 rounded">
+                                          {icons[reactionType as keyof typeof icons]}
+                                          <span className="font-bold">{count}</span>
+                                          <span className="text-xs">({reactionType})</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+
+                                {/* Comment Input */}
+                                {showComments[post.id] && (
+                                  <div className="mt-3">
+                                    <div className="flex space-x-3">
+                                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                        {user?.email?.charAt(0).toUpperCase() || 'U'}
+                                      </div>
+                                      <div className="flex-1">
+                                        <input
+                                          type="text"
+                                          placeholder="Add a comment..."
+                                          value={commentInputs[post.id] || ''}
+                                          onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                          onKeyPress={(e) => e.key === 'Enter' && handleAddComment(post.id)}
+                                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                      </div>
+                                      <button
+                                        onClick={() => handleAddComment(post.id)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                      >
+                                        Post
+                                      </button>
+                                    </div>
+
+                                    {/* Comments List */}
+                                    {postComments[post.id] && postComments[post.id].length > 0 && (
+                                      <div className="mt-4 space-y-3">
+                                        {postComments[post.id].map((comment: any) => (
+                                          <div key={comment.id} className="flex space-x-3">
+                                            <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                              {(comment.profiles?.full_name || comment.profiles?.email || 'U').charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="flex-1">
+                                              <div className="bg-gray-100 rounded-lg px-3 py-2">
+                                                <div className="font-semibold text-sm text-gray-900">
+                                                  {comment.profiles?.full_name || comment.profiles?.email || 'Unknown'}
+                                                </div>
+                                                <p className="text-gray-800 text-sm">{comment.content}</p>
+                                              </div>
+                                              <div className="text-xs text-gray-500 mt-1">
+                                                {formatTime(comment.created_at)}
+                                                {comment.is_edited && <span className="ml-2">(edited)</span>}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1325,18 +1946,134 @@ export const Chat: React.FC = () => {
                               )}
                               
                               {/* Post Actions */}
-                              <div className="flex items-center space-x-4 mt-4 pt-3 border-t border-gray-100">
-                                <button className="flex items-center text-gray-500 hover:text-gray-700">
-                                  <span className="mr-1">👍</span>
-                                  <span className="text-sm">Like</span>
-                                </button>
-                                <button className="flex items-center text-gray-500 hover:text-gray-700">
-                                  <Reply className="w-4 h-4 mr-1" />
-                                  <span className="text-sm">Reply</span>
-                                </button>
-                                <span className="text-sm text-gray-500">
-                                  {post.view_count || 0} views
-                                </span>
+                              <div className="mt-4 pt-3 border-t border-gray-100">
+                                {/* Reactions */}
+                                <div className="flex items-center space-x-1 mb-3">
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'like')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Like"
+                                  >
+                                    <ThumbsUp className="w-4 h-4 text-gray-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'love')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Love"
+                                  >
+                                    <Heart className="w-4 h-4 text-red-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'laugh')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Laugh"
+                                  >
+                                    <Laugh className="w-4 h-4 text-yellow-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'sad')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Sad"
+                                  >
+                                    <Frown className="w-4 h-4 text-blue-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'angry')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Angry"
+                                  >
+                                    <Angry className="w-4 h-4 text-red-600" />
+                                  </button>
+                                  <button 
+                                    onClick={() => toggleComments(post.id)}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors ml-4"
+                                  >
+                                    <MessageSquare className="w-4 h-4 mr-1" />
+                                    <span className="text-sm">Comment</span>
+                                  </button>
+                                  <span className="text-sm text-gray-500 ml-4">
+                                    {post.view_count || 0} views
+                                  </span>
+                                </div>
+
+                                {/* Reaction Summary */}
+                                {postReactions[post.id] && Array.isArray(postReactions[post.id]) && postReactions[post.id].length > 0 && (
+                                  <div className="flex items-center space-x-2 mb-3 text-sm text-gray-600">
+                                    {['like', 'love', 'laugh', 'sad', 'angry'].map(reactionType => {
+                                      const count = postReactions[post.id].filter((r: any) => (r.reaction_type || r.type) === reactionType).length;
+                                      if (count === 0) return null;
+                                      
+                                      const icons = {
+                                        like: <span>👍</span>,
+                                        love: <span>❤️</span>, 
+                                        laugh: <span>😂</span>,
+                                        sad: <span>😢</span>,
+                                        angry: <span>😡</span>
+                                      };
+                                      
+                                      return (
+                                        <span key={reactionType} className="flex items-center space-x-1 bg-gray-200 px-2 py-1 rounded">
+                                          {icons[reactionType as keyof typeof icons]}
+                                          <span className="font-bold">{count}</span>
+                                          <span className="text-xs">({reactionType})</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+
+                                {/* Comment Input */}
+                                {showComments[post.id] && (
+                                  <div className="mt-3">
+                                    <div className="flex space-x-3">
+                                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                        {user?.email?.charAt(0).toUpperCase() || 'U'}
+                                      </div>
+                                      <div className="flex-1">
+                                        <input
+                                          type="text"
+                                          placeholder="Add a comment..."
+                                          value={commentInputs[post.id] || ''}
+                                          onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                          onKeyPress={(e) => e.key === 'Enter' && handleAddComment(post.id)}
+                                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                      </div>
+                                      <button
+                                        onClick={() => handleAddComment(post.id)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                      >
+                                        Post
+                                      </button>
+                                    </div>
+
+                                    {/* Comments List */}
+                                    {postComments[post.id] && postComments[post.id].length > 0 && (
+                                      <div className="mt-4 space-y-3">
+                                        {postComments[post.id].map((comment: any) => (
+                                          <div key={comment.id} className="flex space-x-3">
+                                            <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                              {(comment.profiles?.full_name || comment.profiles?.email || 'U').charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="flex-1">
+                                              <div className="bg-gray-100 rounded-lg px-3 py-2">
+                                                <div className="font-semibold text-sm text-gray-900">
+                                                  {comment.profiles?.full_name || comment.profiles?.email || 'Unknown'}
+                                                </div>
+                                                <p className="text-gray-800 text-sm">{comment.content}</p>
+                                              </div>
+                                              <div className="text-xs text-gray-500 mt-1">
+                                                {formatTime(comment.created_at)}
+                                                {comment.is_edited && <span className="ml-2">(edited)</span>}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1466,7 +2203,9 @@ export const Chat: React.FC = () => {
             <div className="flex-1 flex flex-col bg-white">
               {/* Replies Header */}
               <div className="px-6 py-4 border-b border-gray-200 bg-white">
-                <h2 className="text-xl font-semibold text-gray-900 mb-4">Replies</h2>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">Replies</h2>
+                </div>
                 
                 {/* Unread/Read Tabs - Discord Style */}
                 <div className="flex space-x-6">
@@ -1496,52 +2235,104 @@ export const Chat: React.FC = () => {
               {/* Content Area */}
               <div className="flex-1 overflow-y-auto max-h-[calc(100vh-200px)]">
                 {repliesTab === 'unread' ? (
-                  /* Unread Empty State */
-                  <div className="flex-1 flex flex-col items-center justify-center p-12">
-                    <div className="w-32 h-32 mb-6 relative">
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        {/* Stacked message cards */}
-                        <div className="w-20 h-16 bg-gray-200 rounded-lg relative transform -rotate-12">
-                          <div className="absolute top-2 left-2 w-3 h-3 bg-gray-400 rounded-full"></div>
-                          <div className="absolute top-2 right-2 w-8 h-1 bg-gray-400 rounded"></div>
-                          <div className="absolute bottom-2 left-2 w-12 h-1 bg-gray-400 rounded"></div>
-                        </div>
-                        <div className="absolute w-20 h-16 bg-gray-300 rounded-lg transform rotate-6">
-                          <div className="absolute top-2 left-2 w-3 h-3 bg-gray-500 rounded-full"></div>
-                          <div className="absolute top-2 right-2 w-8 h-1 bg-gray-500 rounded"></div>
-                          <div className="absolute bottom-2 left-2 w-12 h-1 bg-gray-500 rounded"></div>
-                        </div>
-                        <div className="absolute w-20 h-16 bg-gray-400 rounded-lg transform rotate-12 translate-x-1 translate-y-1">
-                          <div className="absolute top-2 left-2 w-3 h-3 bg-gray-600 rounded-full"></div>
-                          <div className="absolute top-2 right-2 w-8 h-1 bg-gray-600 rounded"></div>
-                          <div className="absolute bottom-2 left-2 w-12 h-1 bg-gray-600 rounded"></div>
-                        </div>
-                        {/* Checkmark */}
-                        <div className="absolute bottom-0 right-0 w-8 h-8 bg-white border-2 border-green-500 rounded-full flex items-center justify-center">
-                          <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        </div>
+                  /* Unread Replies List */
+                  <div className="p-4">
+                    {unreadReplies.length > 0 ? (
+                      <div className="space-y-4">
+                        {unreadReplies.map((reply: any) => (
+                          <div key={reply.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer"
+                               onClick={() => handleNavigateToMessage(reply)}>
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                {reply.sender_name?.charAt(0) || 'U'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-sm font-medium text-gray-900">
+                                    {reply.sender_name || 'Unknown User'}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {new Date(reply.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                                <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                  {reply.content}
+                                </p>
+                                <div className="flex items-center text-xs text-gray-500">
+                                  <span className="bg-gray-100 px-2 py-1 rounded">
+                                    {reply.message_type === 'channel' ? `#${reply.location_name}` : reply.location_name}
+                                  </span>
+                                  <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                    Unread
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                    <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
-                    <p className="text-gray-600 text-center mb-6">
-                      Looks like you don't have any unread replies
-                    </p>
-                    <button className="px-6 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium">
-                      Read old replies
-                    </button>
+                    ) : (
+                      /* Empty State */
+                      <div className="flex-1 flex flex-col items-center justify-center p-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Reply className="w-8 h-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
+                        <p className="text-gray-600 text-center mb-6">
+                          Looks like you don't have any unread replies
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  /* Read Tab Content */
-                  <div className="flex-1 flex flex-col items-center justify-center p-12">
-                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Reply className="w-8 h-8 text-gray-400" />
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No read replies</h3>
-                    <p className="text-gray-600 text-center max-w-sm">
-                      Previously read replies will appear here.
-                    </p>
+                  /* Read Replies List */
+                  <div className="p-4">
+                    {readReplies.length > 0 ? (
+                      <div className="space-y-4">
+                        {readReplies.map((reply: any) => (
+                          <div key={reply.id} className="bg-white border border-gray-200 rounded-lg p-4 opacity-75 hover:bg-gray-50 cursor-pointer"
+                               onClick={() => handleNavigateToMessage(reply)}>
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                {reply.sender_name?.charAt(0) || 'U'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-sm font-medium text-gray-700">
+                                    {reply.sender_name || 'Unknown User'}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {new Date(reply.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                                <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                  {reply.content}
+                                </p>
+                                <div className="flex items-center text-xs text-gray-500">
+                                  <span className="bg-gray-100 px-2 py-1 rounded">
+                                    {reply.message_type === 'channel' ? `#${reply.location_name}` : reply.location_name}
+                                  </span>
+                                  <span className="ml-2 bg-gray-200 text-gray-600 px-2 py-1 rounded">
+                                    Read
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      /* Empty State */
+                      <div className="flex-1 flex flex-col items-center justify-center p-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Reply className="w-8 h-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">No read replies</h3>
+                        <p className="text-gray-600 text-center max-w-sm">
+                          Previously read replies will appear here.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1671,16 +2462,71 @@ export const Chat: React.FC = () => {
                   </div>
                 ) : activityTab === 'reactions' ? (
                   /* Reactions Content */
-                  <div className="flex-1 flex items-center justify-center p-12">
-                    <div className="text-center">
-                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <span className="text-2xl">😊</span>
+                  <div className="flex-1">
+                    {activityReactions.length > 0 ? (
+                      <div className="p-6 space-y-4">
+                        {activityReactions.map((reaction) => {
+                          const getReactionIcon = (type: string) => {
+                            switch (type) {
+                              case 'like': return <ThumbsUp className="w-4 h-4 text-gray-600" />;
+                              case 'love': return <Heart className="w-4 h-4 text-red-500" />;
+                              case 'laugh': return <Laugh className="w-4 h-4 text-yellow-500" />;
+                              case 'sad': return <Frown className="w-4 h-4 text-blue-500" />;
+                              case 'angry': return <Angry className="w-4 h-4 text-red-600" />;
+                              default: return <span>👍</span>;
+                            }
+                          };
+
+                          return (
+                            <div key={reaction.id} className="flex items-start space-x-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                              <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                                {(reaction.profile?.full_name || reaction.profile?.email || 'U').charAt(0).toUpperCase()}
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <span className="font-semibold text-gray-900">
+                                    {reaction.profile?.full_name || reaction.profile?.email || 'Unknown'}
+                                  </span>
+                                  <span className="text-gray-500">reacted with</span>
+                                  <span className="flex items-center space-x-1">
+                                    {getReactionIcon(reaction.reaction_type)}
+                                    <span className="text-sm font-medium">
+                                      {reaction.reaction_type}
+                                    </span>
+                                  </span>
+                                  <span className="text-gray-500">to your post</span>
+                                </div>
+                                <div className="text-sm text-gray-600 mb-2">
+                                  in <span className="font-medium">#{reaction.channel?.name || 'unknown'}</span> • {formatTime(reaction.created_at)}
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border-l-4 border-blue-500">
+                                  {reaction.post?.title && (
+                                    <div className="font-semibold text-gray-900 mb-1">
+                                      {reaction.post.title}
+                                    </div>
+                                  )}
+                                  <div className="text-sm text-gray-700 line-clamp-2">
+                                    {reaction.post?.content || 'Post content unavailable'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No reactions yet</h3>
-                      <p className="text-gray-600 text-center max-w-sm">
-                        When people react to your messages, it will appear here.
-                      </p>
-                    </div>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center p-12">
+                        <div className="text-center">
+                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span className="text-2xl">😊</span>
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-2">No reactions yet</h3>
+                          <p className="text-gray-600 text-center max-w-sm">
+                            When people react to your posts, it will appear here.
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   /* Assigned to me Content */
@@ -1707,45 +2553,9 @@ export const Chat: React.FC = () => {
                   <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
                     <Edit3 className="w-4 h-4 text-white" />
                   </div>
-                  <h2 className="text-xl font-semibold text-gray-900">Drafts & Sent</h2>
+                  <h2 className="text-xl font-semibold text-gray-900">Sent Messages</h2>
                 </div>
                 
-                {/* Tabs */}
-                <div className="flex space-x-6">
-                  <button
-                    onClick={() => setDraftsTab('drafts')}
-                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      draftsTab === 'drafts'
-                        ? 'text-gray-900 border-purple-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
-                    }`}
-                  >
-                    <Edit3 className="w-4 h-4" />
-                    <span>Drafts</span>
-                  </button>
-                  <button
-                    onClick={() => setDraftsTab('sent')}
-                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      draftsTab === 'sent'
-                        ? 'text-gray-900 border-purple-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
-                    }`}
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>Sent</span>
-                  </button>
-                  <button
-                    onClick={() => setDraftsTab('scheduled')}
-                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      draftsTab === 'scheduled'
-                        ? 'text-gray-900 border-purple-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span>Scheduled</span>
-                  </button>
-                </div>
               </div>
 
               {/* Search Bar */}
@@ -1754,13 +2564,9 @@ export const Chat: React.FC = () => {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
                     type="text"
-                    placeholder={
-                      draftsTab === 'drafts' ? 'Search drafts...' :
-                      draftsTab === 'sent' ? 'Search sent...' :
-                      'Search scheduled messages...'
-                    }
-                    value={draftsSearchQuery}
-                    onChange={(e) => setDraftsSearchQuery(e.target.value)}
+                    placeholder="Search sent messages..."
+                    value={sentSearchQuery}
+                    onChange={(e) => setSentSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                   />
                 </div>
@@ -1773,11 +2579,9 @@ export const Chat: React.FC = () => {
                     <MessageSquare className="w-3 h-3" />
                     <span>In thread</span>
                   </div>
-                  {draftsTab === 'sent' && (
-                    <div className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      <span>Sent by: You</span>
-                    </div>
-                  )}
+                  <div className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+                    <span>Sent by: You</span>
+                  </div>
                 </div>
               </div>
 
@@ -1787,16 +2591,13 @@ export const Chat: React.FC = () => {
                 <div className="grid grid-cols-3 gap-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
                   <div>Location</div>
                   <div>Message</div>
-                  <div>
-                    {draftsTab === 'sent' ? 'Sent' : 
-                     draftsTab === 'scheduled' ? 'Send' : 'Updated'}
-                  </div>
+                  <div>Sent</div>
                 </div>
               </div>
 
               {/* Content Area */}
               <div className="flex-1 overflow-y-auto max-h-[calc(100vh-300px)] min-h-0">
-                {draftsTab === 'drafts' ? (
+                {false ? (
                   /* Drafts Content */
                   drafts.length === 0 || (draftsSearchQuery && searchDrafts(draftsSearchQuery).length === 0) ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-12">
@@ -1898,9 +2699,9 @@ export const Chat: React.FC = () => {
                       ))}
                     </div>
                   )
-                ) : draftsTab === 'sent' ? (
+                ) : true ? (
                   /* Sent Messages Content */
-                  sentMessages.length === 0 || (draftsSearchQuery && searchSent(draftsSearchQuery).length === 0) ? (
+                  sentMessages.length === 0 || (sentSearchQuery && searchSent(sentSearchQuery).length === 0) ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-12">
                       <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
                         <div className="w-10 h-10 border-2 border-gray-400 rounded-full flex items-center justify-center">
@@ -1914,26 +2715,37 @@ export const Chat: React.FC = () => {
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
-                      {(draftsSearchQuery ? searchSent(draftsSearchQuery) : sentMessages).map((message) => (
-                        <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                      {(sentSearchQuery ? searchSent(sentSearchQuery) : sentMessages).map((message) => (
+                        <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                             onClick={() => handleNavigateToMessage(message)}>
                           <div className="grid grid-cols-3 gap-4 items-start">
                             <div className="flex items-center space-x-2">
-                              <Hash className="w-4 h-4 text-gray-400" />
-                              <span className="text-sm text-gray-900 truncate">{message.location}</span>
+                              {message.message_type === 'channel' ? (
+                                <Hash className="w-4 h-4 text-gray-400" />
+                              ) : (
+                                <MessageSquare className="w-4 h-4 text-gray-400" />
+                              )}
+                              <span className="text-sm text-gray-900 truncate">
+                                {message.message_type === 'channel' ? `#${message.location_name}` : message.location_name}
+                              </span>
                             </div>
                             <div className="flex items-start justify-between group">
-                              <p className="text-sm text-gray-900 flex-1 pr-4">{message.message}</p>
+                              <p className="text-sm text-gray-900 flex-1 pr-4 line-clamp-2">{message.content}</p>
                               <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   className="p-1 text-gray-400 hover:text-gray-600 rounded"
-                                  title="View message"
+                                  title="Go to message"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNavigateToMessage(message);
+                                  }}
                                 >
                                   <Eye className="w-4 h-4" />
                                 </button>
                               </div>
                             </div>
                             <div className="text-sm text-gray-500">
-                              {new Date(message.sentAt).toLocaleDateString()}
+                              {new Date(message.created_at).toLocaleDateString()} at {new Date(message.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                             </div>
                           </div>
                         </div>

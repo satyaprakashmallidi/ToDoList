@@ -28,19 +28,22 @@ export function useChannels() {
     setError(null);
 
     try {
-      // First get the user's team invite ID
-      const { data: teamMember, error: teamError } = await supabase
+      // First get the user's team invite IDs (user might be in multiple teams)
+      const { data: teamMembers, error: teamError } = await supabase
         .from('team_members')
         .select('team_invite_id')
-        .eq('user_id', user.id)
-        .single();
+        .eq('user_id', user.id);
 
-      if (teamError || !teamMember) {
+      if (teamError || !teamMembers || teamMembers.length === 0) {
         console.error('No team membership found:', teamError);
         setChannels([]);
         setLoading(false);
         return;
       }
+
+      // Use the first team for now (you might want to let user choose later)
+      const teamMember = teamMembers[0];
+      console.log(`Found ${teamMembers.length} team memberships, using first one:`, teamMember);
 
       // Get channels for the user's team via channel_members
       const { data: userChannelMemberships, error: membershipsError } = await supabase
@@ -62,6 +65,26 @@ export function useChannels() {
 
       const teamChannels = userChannelMemberships?.map(membership => membership.channels) || [];
 
+      // Get member counts for all channels in parallel
+      const channelIds = teamChannels.map(channel => channel.id);
+      const memberCountPromises = channelIds.map(async (channelId) => {
+        const { count, error } = await supabase
+          .from('channel_members')
+          .select('*', { count: 'exact', head: true })
+          .eq('channel_id', channelId)
+          .is('left_at', null);
+        
+        if (error) {
+          console.error(`Error counting members for channel ${channelId}:`, error);
+          return { channelId, count: 1 }; // Default to 1 (at least the creator)
+        }
+        
+        return { channelId, count: count || 1 };
+      });
+
+      const memberCounts = await Promise.all(memberCountPromises);
+      const memberCountMap = new Map(memberCounts.map(({ channelId, count }) => [channelId, count]));
+
       const formattedChannels: Channel[] = (teamChannels || []).map(channel => ({
         id: channel.id,
         team_invite_id: channel.team_invite_id,
@@ -75,7 +98,7 @@ export function useChannels() {
         settings: channel.settings || {},
         created_at: channel.created_at,
         updated_at: channel.updated_at,
-        member_count: 0,
+        member_count: memberCountMap.get(channel.id) || 1,
         unread_count: 0
       }));
 
@@ -456,6 +479,9 @@ export function useChannels() {
         return false;
       }
 
+      // Reload channels to get updated member counts
+      await loadChannels();
+
       return true;
 
     } catch (err) {
@@ -463,7 +489,7 @@ export function useChannels() {
       setError(err instanceof Error ? err.message : 'Failed to add members');
       return false;
     }
-  }, [user, supabase]);
+  }, [user, supabase, loadChannels]);
 
   // Cleanup function for subscriptions
   const cleanupSubscriptions = useCallback(() => {
@@ -765,6 +791,763 @@ export function useChannels() {
     }
   }, [user, supabase, loadChannelPosts]);
 
+  // Add or toggle a reaction to a post
+  const togglePostReaction = useCallback(async (
+    postId: string,
+    reactionType: 'like' | 'love' | 'laugh' | 'sad' | 'angry'
+  ) => {
+    if (!user) return false;
+
+    try {
+      // Check if user already has this reaction on this post
+      const { data: existingReactions, error: checkError } = await supabase
+        .from('post_reactions')
+        .select('id')
+        .eq('post_id', postId)
+        .eq('user_id', user.id)
+        .eq('reaction_type', reactionType);
+
+      if (checkError) {
+        console.error('Error checking existing reaction:', checkError);
+        return false;
+      }
+
+      if (existingReactions && existingReactions.length > 0) {
+        const existingReaction = existingReactions[0];
+        // Remove existing reaction
+        const { error: deleteError } = await supabase
+          .from('post_reactions')
+          .delete()
+          .eq('id', existingReaction.id);
+
+        if (deleteError) {
+          console.error('Error removing reaction:', deleteError);
+          return false;
+        }
+        
+        console.log('Reaction removed successfully');
+        return true;
+      } else {
+        // Add new reaction
+        const { error: insertError } = await supabase
+          .from('post_reactions')
+          .insert({
+            post_id: postId,
+            user_id: user.id,
+            reaction_type: reactionType
+          });
+
+        if (insertError) {
+          console.error('Error adding reaction:', insertError);
+          return false;
+        }
+
+        console.log('Reaction added successfully');
+        return true;
+      }
+    } catch (err) {
+      console.error('Failed to toggle post reaction:', err);
+      return false;
+    }
+  }, [user, supabase]);
+
+  // Get reactions for a post
+  const getPostReactions = useCallback(async (postId: string) => {
+    if (!user) return [];
+
+    console.log('Fetching reactions for post:', postId);
+
+    try {
+      const { data: reactions, error } = await supabase
+        .from('post_reactions')
+        .select(`
+          id,
+          user_id,
+          reaction_type,
+          created_at
+        `)
+        .eq('post_id', postId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching post reactions:', error);
+        return [];
+      }
+
+      console.log(`Raw reactions from database for post ${postId}:`, reactions);
+      console.log(`Sample reaction structure:`, reactions?.[0]);
+
+      // Get user profiles separately if we have reactions
+      if (reactions && reactions.length > 0) {
+        const userIds = [...new Set(reactions.map(r => r.user_id))];
+        const { data: profiles, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, full_name, email')
+          .in('id', userIds);
+
+        if (profileError) {
+          console.error('Error fetching user profiles for reactions:', profileError);
+        } else {
+          // Merge profile data with reactions
+          const profileMap = new Map(profiles.map(p => [p.id, p]));
+          return reactions.map(reaction => ({
+            ...reaction,
+            profiles: profileMap.get(reaction.user_id)
+          }));
+        }
+      }
+
+      return reactions || [];
+    } catch (err) {
+      console.error('Failed to get post reactions:', err);
+      return [];
+    }
+  }, [user, supabase]);
+
+  // Add a comment to a post
+  const addPostComment = useCallback(async (
+    postId: string,
+    content: string,
+    replyToId?: string
+  ) => {
+    if (!user || !content.trim()) return null;
+
+    try {
+      const { data: comment, error } = await supabase
+        .from('post_comments')
+        .insert({
+          post_id: postId,
+          author_id: user.id,
+          content: content.trim(),
+          reply_to_id: replyToId || null
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error adding comment:', error);
+        return null;
+      }
+
+      console.log('Comment added successfully');
+      return comment;
+    } catch (err) {
+      console.error('Failed to add post comment:', err);
+      return null;
+    }
+  }, [user, supabase]);
+
+  // Get comments for a post
+  const getPostComments = useCallback(async (postId: string) => {
+    if (!user) return [];
+
+    try {
+      const { data: comments, error } = await supabase
+        .from('post_comments')
+        .select(`
+          id,
+          post_id,
+          author_id,
+          content,
+          reply_to_id,
+          is_edited,
+          created_at,
+          updated_at
+        `)
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching post comments:', error);
+        return [];
+      }
+
+      // Get user profiles separately if we have comments
+      if (comments && comments.length > 0) {
+        const authorIds = [...new Set(comments.map(c => c.author_id))];
+        const { data: profiles, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, avatar_url')
+          .in('id', authorIds);
+
+        if (profileError) {
+          console.error('Error fetching user profiles for comments:', profileError);
+        } else {
+          // Merge profile data with comments
+          const profileMap = new Map(profiles.map(p => [p.id, p]));
+          return comments.map(comment => ({
+            ...comment,
+            profiles: profileMap.get(comment.author_id)
+          }));
+        }
+      }
+
+      return comments || [];
+    } catch (err) {
+      console.error('Failed to get post comments:', err);
+      return [];
+    }
+  }, [user, supabase]);
+
+  // Mark a message as read
+  const markMessageAsRead = useCallback(async (messageId: string, messageType?: 'direct' | 'channel') => {
+    if (!user || !messageId) return false;
+
+    try {
+      console.log('Attempting to mark message as read:', { messageId, userId: user.id, messageType });
+      
+      // Skip message type detection since we don't need it for localStorage
+      let actualMessageType = messageType || 'unknown';
+      console.log('Skipping message type detection, using:', actualMessageType);
+      
+      console.log('Determined message type:', actualMessageType);
+      
+      // Use localStorage directly since database table doesn't exist
+      console.log('Using localStorage for read tracking');
+      const readKey = `read_${user.id}_${messageId}`;
+      localStorage.setItem(readKey, new Date().toISOString());
+      console.log('Stored read status in localStorage:', readKey);
+      return true;
+    } catch (err) {
+      console.error('Failed to mark message as read:', err);
+      return false;
+    }
+  }, [user, supabase]);
+
+  // Mark multiple channel messages as read
+  const markChannelMessagesAsRead = useCallback(async (channelId: string) => {
+    if (!user || !channelId) return false;
+
+    try {
+      console.log('Marking channel messages as read for channel:', channelId);
+      
+      // Get all messages for this channel that are not sent by the current user
+      const { data: messages, error: messagesError } = await supabase
+        .from('channel_messages')
+        .select('id, sender_id, content')
+        .eq('channel_id', channelId)
+        .eq('is_deleted', false)
+        .neq('sender_id', user.id);
+
+      if (messagesError) {
+        console.error('Error fetching channel messages:', messagesError);
+        return false;
+      }
+
+      console.log('Found channel messages to mark as read:', messages);
+
+      if (!messages || messages.length === 0) {
+        console.log('No channel messages to mark as read');
+        return true;
+      }
+
+      // Mark all messages as read using localStorage
+      const timestamp = new Date().toISOString();
+      messages.forEach(msg => {
+        const readKey = `read_${user.id}_${msg.id}`;
+        localStorage.setItem(readKey, timestamp);
+      });
+
+      console.log(`Successfully marked ${messages.length} channel messages as read using localStorage`);
+      return true;
+    } catch (err) {
+      console.error('Failed to mark channel messages as read:', err);
+      return false;
+    }
+  }, [user, supabase]);
+
+  // Mark direct messages as read for a conversation
+  const markDirectMessagesAsRead = useCallback(async (conversationId: string) => {
+    if (!user || !conversationId) return false;
+
+    try {
+      console.log('Marking direct messages as read for conversation:', conversationId);
+      
+      // Get all messages for this conversation that are not sent by the current user
+      const { data: messages, error: messagesError } = await supabase
+        .from('direct_messages')
+        .select('id, sender_id, content')
+        .eq('conversation_id', conversationId)
+        .eq('is_deleted', false)
+        .neq('sender_id', user.id);
+
+      if (messagesError) {
+        console.error('Error fetching messages for conversation:', messagesError);
+        return false;
+      }
+
+      console.log('Found messages to mark as read:', messages);
+
+      if (!messages || messages.length === 0) {
+        console.log('No messages to mark as read');
+        return true;
+      }
+
+      // Mark messages as read using localStorage
+      const timestamp = new Date().toISOString();
+      messages.forEach(msg => {
+        const readKey = `read_${user.id}_${msg.id}`;
+        localStorage.setItem(readKey, timestamp);
+      });
+
+      console.log(`Successfully marked ${messages.length} direct messages as read using localStorage`);
+      return true;
+    } catch (err) {
+      console.error('Failed to mark direct messages as read:', err);
+      return false;
+    }
+  }, [user, supabase]);
+
+  // Simple test function to verify basic message_reads functionality
+  const testMessageReads = useCallback(async () => {
+    if (!user) return;
+
+    console.log('Testing message_reads functionality...');
+    
+    try {
+      // WORKAROUND: Skip messages table due to RLS recursion
+      console.log('Skipping messages table - RLS policies still causing infinite recursion');
+      console.log('Please disable ALL RLS policies on messages table in Supabase dashboard');
+      
+      // Only test message_reads table directly
+      console.log('Testing alternative message tables...');
+      
+      // Check channel_messages table instead
+      const { data: channelMessages, error: channelError } = await supabase
+        .from('channel_messages')
+        .select('id, content, sender_id, channel_id')
+        .eq('is_deleted', false)
+        .limit(5);
+        
+      console.log('Channel messages found:', channelMessages);
+      
+      if (channelError) {
+        console.error('Channel messages error:', channelError);
+      }
+      
+      // Check group_messages table instead
+      const { data: groupMessages, error: groupError } = await supabase
+        .from('group_messages')
+        .select('id, content, sender_id, group_id')
+        .eq('is_deleted', false)
+        .limit(5);
+        
+      console.log('Group messages found:', groupMessages);
+      
+      if (groupError) {
+        console.error('Group messages error:', groupError);
+      }
+
+      // Test message_reads table directly
+      const { data: existingReads, error: readsError } = await supabase
+        .from('message_reads')
+        .select('*')
+        .eq('user_id', user.id)
+        .limit(5);
+
+      if (readsError) {
+        console.error('Error fetching existing reads:', readsError);
+        return;
+      }
+
+      console.log('Existing read records for user:', existingReads);
+      console.log('Message reads test completed successfully');
+
+    } catch (err) {
+      console.error('Test failed:', err);
+    }
+  }, [user, supabase]);
+
+  // Helper function to get user's message IDs
+  const getUserMessageIds = useCallback(async () => {
+    if (!user) return '';
+
+    try {
+      const { data: userMessages, error } = await supabase
+        .from('channel_messages')
+        .select('id')
+        .eq('sender_id', user.id)
+        .eq('is_deleted', false);
+
+      if (error || !userMessages) {
+        return '';
+      }
+
+      return userMessages.map(m => m.id).join(',');
+    } catch (err) {
+      console.error('Failed to get user message IDs:', err);
+      return '';
+    }
+  }, [user, supabase]);
+
+  // Get unread replies for the current user
+  const getUnreadReplies = useCallback(async () => {
+    if (!user) return [];
+
+    try {
+      let allMessages: any[] = [];
+
+      // Get messages from direct_messages table
+      console.log('Fetching from direct_messages table...');
+      const { data: directMessages, error: directError } = await supabase
+        .from('direct_messages')
+        .select(`
+          id,
+          conversation_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at,
+          reply_to_id
+        `)
+        .eq('is_deleted', false)
+        .neq('sender_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(25);
+
+      if (directError) {
+        console.error('Error fetching direct messages:', directError);
+      } else {
+        console.log('Direct messages found:', directMessages?.length || 0);
+        allMessages = [...allMessages, ...(directMessages || []).map(msg => ({ ...msg, message_type: 'direct' }))];
+      }
+
+      // Get messages from channel_messages table
+      console.log('Fetching from channel_messages table...');
+      const { data: channelMessages, error: channelError } = await supabase
+        .from('channel_messages')
+        .select(`
+          id,
+          channel_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at,
+          reply_to_id
+        `)
+        .eq('is_deleted', false)
+        .neq('sender_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(25);
+
+      if (channelError) {
+        console.error('Error fetching channel messages:', channelError);
+      } else {
+        console.log('Channel messages found:', channelMessages?.length || 0);
+        allMessages = [...allMessages, ...(channelMessages || []).map(msg => ({ ...msg, message_type: 'channel' }))];
+      }
+
+      console.log('Total messages found:', allMessages.length);
+
+      if (allMessages.length === 0) {
+        console.log('No messages found in any table');
+        return [];
+      }
+
+      // Sort all messages by created_at
+      allMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Get read status for all these messages - use localStorage since database table doesn't exist
+      let readMessageIds = new Set<string>();
+
+      console.log('Checking localStorage for read status...');
+
+      // Fallback: Check localStorage for read status
+      allMessages.forEach(msg => {
+        const readKey = `read_${user.id}_${msg.id}`;
+        if (localStorage.getItem(readKey)) {
+          readMessageIds.add(msg.id);
+        }
+      });
+
+      console.log('Read message IDs (combined):', readMessageIds);
+
+      // Get channel names for messages that have channel_id (separate query to avoid RLS issues)
+      const channelIds = [...new Set(allMessages.filter(m => m.channel_id).map(m => m.channel_id))];
+      let channelNames: Record<string, string> = {};
+      
+      if (channelIds.length > 0) {
+        const { data: channels, error: channelsError } = await supabase
+          .from('channels')
+          .select('id, name')
+          .in('id', channelIds);
+          
+        if (channelsError) {
+          console.error('Error fetching channel names:', channelsError);
+        } else {
+          channelNames = Object.fromEntries((channels || []).map(c => [c.id, c.name]));
+        }
+      }
+
+      // Filter to only unread messages and format them
+      const unreadMessages = allMessages
+        .filter(msg => !readMessageIds.has(msg.id))
+        .map(msg => ({
+          ...msg,
+          message_type: msg.channel_id ? 'channel' as const : 'direct' as const,
+          sender_name: 'User', // You can enhance this by joining with profiles table later
+          location_name: msg.channel_id ? 
+            (channelNames[msg.channel_id] || 'Unknown Channel') : 
+            'Direct Message'
+        }));
+
+      console.log('Filtered unread messages:', unreadMessages);
+      return unreadMessages;
+
+    } catch (err) {
+      console.error('Failed to get unread replies:', err);
+      return [];
+    }
+  }, [user, supabase]);
+
+  // Get read replies for the current user
+  const getReadReplies = useCallback(async () => {
+    if (!user) return [];
+
+    try {
+      console.log('Getting read replies for user:', user.email);
+      let allMessages: any[] = [];
+
+      // Get messages from direct_messages table
+      const { data: directMessages, error: directError } = await supabase
+        .from('direct_messages')
+        .select(`
+          id,
+          conversation_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at,
+          reply_to_id
+        `)
+        .eq('is_deleted', false)
+        .neq('sender_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(25);
+
+      if (directError) {
+        console.error('Error fetching direct messages for read:', directError);
+      } else {
+        allMessages = [...allMessages, ...(directMessages || []).map(msg => ({ ...msg, message_type: 'direct' }))];
+      }
+
+      // Get messages from channel_messages table
+      const { data: channelMessages, error: channelError } = await supabase
+        .from('channel_messages')
+        .select(`
+          id,
+          channel_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at,
+          reply_to_id
+        `)
+        .eq('is_deleted', false)
+        .neq('sender_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(25);
+
+      if (channelError) {
+        console.error('Error fetching channel messages for read:', channelError);
+      } else {
+        allMessages = [...allMessages, ...(channelMessages || []).map(msg => ({ ...msg, message_type: 'channel' }))];
+      }
+
+      if (allMessages.length === 0) {
+        console.log('No messages found for read check');
+        return [];
+      }
+
+      // Sort all messages by created_at
+      allMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Get read status for all these messages - use localStorage since database table doesn't exist
+      let readMessageIds = new Set<string>();
+
+      console.log('Checking localStorage for read status (read section)...');
+
+      // Fallback: Check localStorage for read status
+      allMessages.forEach(msg => {
+        const readKey = `read_${user.id}_${msg.id}`;
+        if (localStorage.getItem(readKey)) {
+          readMessageIds.add(msg.id);
+        }
+      });
+
+      console.log('Read message IDs for read section (combined):', readMessageIds);
+
+      // Get channel names for messages that have channel_id
+      const channelIds = [...new Set(allMessages.filter(m => m.channel_id).map(m => m.channel_id))];
+      let channelNames: Record<string, string> = {};
+      
+      if (channelIds.length > 0) {
+        const { data: channels, error: channelsError } = await supabase
+          .from('channels')
+          .select('id, name')
+          .in('id', channelIds);
+          
+        if (!channelsError) {
+          channelNames = Object.fromEntries((channels || []).map(c => [c.id, c.name]));
+        }
+      }
+
+      // Filter to only READ messages and format them
+      const readMessagesFormatted = allMessages
+        .filter(msg => readMessageIds.has(msg.id))
+        .map(msg => ({
+          ...msg,
+          message_type: msg.channel_id ? 'channel' as const : 'direct' as const,
+          sender_name: 'User',
+          location_name: msg.channel_id ? 
+            (channelNames[msg.channel_id] || 'Unknown Channel') : 
+            'Direct Message'
+        }));
+
+      console.log('Read messages found:', readMessagesFormatted.length);
+      return readMessagesFormatted;
+
+    } catch (err) {
+      console.error('Failed to get read replies:', err);
+      return [];
+    }
+  }, [user, supabase]);
+
+  // Get sent messages for the current user
+  const getSentMessages = useCallback(async () => {
+    if (!user) return [];
+
+    try {
+      let allMessages: any[] = [];
+
+      // Get messages from direct_messages table that user sent
+      console.log('Fetching sent direct messages...');
+      const { data: directMessages, error: directError } = await supabase
+        .from('direct_messages')
+        .select(`
+          id,
+          conversation_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at
+        `)
+        .eq('is_deleted', false)
+        .eq('sender_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (directError) {
+        console.error('Error fetching sent direct messages:', directError);
+      } else {
+        console.log('Sent direct messages found:', directMessages?.length || 0);
+        allMessages = [...allMessages, ...(directMessages || []).map(msg => ({ ...msg, message_type: 'direct' }))];
+      }
+
+      // Get messages from channel_messages table that user sent
+      console.log('Fetching sent channel messages...');
+      const { data: channelMessages, error: channelError } = await supabase
+        .from('channel_messages')
+        .select(`
+          id,
+          channel_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at
+        `)
+        .eq('is_deleted', false)
+        .eq('sender_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (channelError) {
+        console.error('Error fetching sent channel messages:', channelError);
+      } else {
+        console.log('Sent channel messages found:', channelMessages?.length || 0);
+        allMessages = [...allMessages, ...(channelMessages || []).map(msg => ({ ...msg, message_type: 'channel' }))];
+      }
+
+      console.log('Total sent messages found:', allMessages.length);
+
+      if (allMessages.length === 0) {
+        console.log('No sent messages found in any table');
+        return [];
+      }
+
+      // Sort all messages by created_at (most recent first)
+      allMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Get channel and conversation names for display
+      const channelIds = [...new Set(allMessages.filter(msg => msg.channel_id).map(msg => msg.channel_id))];
+      const conversationIds = [...new Set(allMessages.filter(msg => msg.conversation_id).map(msg => msg.conversation_id))];
+
+      // Get channel names
+      let channelNames: Record<string, string> = {};
+      if (channelIds.length > 0) {
+        const { data: channelData } = await supabase
+          .from('channels')
+          .select('id, name')
+          .in('id', channelIds);
+        
+        if (channelData) {
+          channelNames = channelData.reduce((acc, channel) => {
+            acc[channel.id] = channel.name;
+            return acc;
+          }, {} as Record<string, string>);
+        }
+      }
+
+      // Get conversation partner names for direct messages
+      let conversationNames: Record<string, string> = {};
+      if (conversationIds.length > 0) {
+        const { data: conversations } = await supabase
+          .from('direct_conversations')
+          .select(`
+            id,
+            user1_id,
+            user2_id,
+            profiles_user1:profiles!direct_conversations_user1_id_fkey(full_name, email),
+            profiles_user2:profiles!direct_conversations_user2_id_fkey(full_name, email)
+          `)
+          .in('id', conversationIds);
+
+        if (conversations) {
+          conversationNames = conversations.reduce((acc, conv) => {
+            // Get the other user's name (not the current user)
+            const otherUser = conv.user1_id === user.id ? conv.profiles_user2 : conv.profiles_user1;
+            const otherUserId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
+            acc[conv.id] = otherUser?.full_name || otherUser?.email || 'Unknown User';
+            
+            // Also store the other user's ID for navigation purposes
+            acc[`${conv.id}_recipient_id`] = otherUserId;
+            return acc;
+          }, {} as Record<string, string>);
+        }
+      }
+
+      // Format messages with location information
+      const sentMessagesFormatted = allMessages.map(msg => ({
+        ...msg,
+        sender_name: user.full_name || user.email || 'You',
+        location_name: msg.message_type === 'channel' 
+          ? channelNames[msg.channel_id] || 'Unknown Channel'
+          : conversationNames[msg.conversation_id] || 'Direct Message',
+        recipient_id: msg.message_type === 'direct' 
+          ? conversationNames[`${msg.conversation_id}_recipient_id`]
+          : null,
+        sentAt: msg.created_at
+      }));
+
+      console.log('Formatted sent messages:', sentMessagesFormatted.length);
+      return sentMessagesFormatted;
+
+    } catch (err) {
+      console.error('Failed to get sent messages:', err);
+      return [];
+    }
+  }, [user, supabase]);
+
   // Initial load of direct conversations
   useEffect(() => {
     if (user) {
@@ -799,6 +1582,17 @@ export function useChannels() {
     getOrCreateDirectConversation,
     loadChannelPosts,
     createChannelPost,
+    togglePostReaction,
+    getPostReactions,
+    addPostComment,
+    getPostComments,
+    markMessageAsRead,
+    markChannelMessagesAsRead,
+    markDirectMessagesAsRead,
+    getUnreadReplies,
+    getReadReplies,
+    getSentMessages,
+    testMessageReads,
     clearError: () => setError(null),
     cleanupSubscriptions
   };
