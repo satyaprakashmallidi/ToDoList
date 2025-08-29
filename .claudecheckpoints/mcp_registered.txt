@@ -1,5 +1,0 @@
-MCP Registration Status: Registered
-Timestamp: 28/8/2025, 3:49 PM
-Project: /Users/vamsireddy/Desktop/ToDoList
-Server: claude-checkpoints
-Port: 8765
