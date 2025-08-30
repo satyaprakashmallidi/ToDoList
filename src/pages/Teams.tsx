@@ -88,16 +88,20 @@ export const Teams: React.FC = () => {
 
       if (data && data.length > 0) {
         const invite = data[0]
+        console.log('Found existing invite:', invite)
         
-        // Always set the latest invite (whether active or expired)
+        // Set the invite and code (no expiration logic)
         setCurrentInvite(invite)
+        setInviteCode(invite.code)
         
-        // Only set the code if the invite is still active
-        if (new Date(invite.expires_at) > new Date()) {
-          setInviteCode(invite.code)
-        } else {
-          // Invite expired, but don't clear the invite - we need it for team persistence
-          setInviteCode('')
+        // Also save to localStorage
+        localStorage.setItem(`team_invite_code_${user.id}`, invite.code)
+      } else {
+        // Check localStorage as fallback
+        const storedCode = localStorage.getItem(`team_invite_code_${user.id}`)
+        if (storedCode) {
+          console.log('Found code in localStorage:', storedCode)
+          setInviteCode(storedCode)
         }
       }
     } catch (error) {
@@ -116,65 +120,87 @@ export const Teams: React.FC = () => {
   }
 
   const generateTeamInviteCode = async () => {
-    if (!user) return
+    if (!user) {
+      showAlert('Error', 'You must be logged in to generate a team code', 'error')
+      return
+    }
+
+    // Check if code already exists (one-time generation)
+    if (inviteCode) {
+      console.log('Code already exists:', inviteCode)
+      return
+    }
     
     setLoading(true)
     try {
       const code = generateInviteCode()
-      const expiresAt = new Date()
-      expiresAt.setDate(expiresAt.getDate() + 15) // 15 days from now
+      console.log('🎯 Generating team code:', code)
 
       const { data, error } = await supabase
         .from('team_invites')
         .insert({
           code: code,
           created_by: user.id,
-          expires_at: expiresAt.toISOString()
+          team_name: `${user.email?.split('@')[0] || 'User'}'s Team`,
+          team_description: 'A collaborative workspace for team productivity',
+          max_members: 50,
+          current_members: 1,
+          expires_at: null, // No expiration
+          is_active: true,
+          settings: {
+            allow_public_join: true,
+            require_approval: false,
+            default_role: 'member'
+          }
         })
         .select()
         .single()
 
-      if (error) throw error
-
-      // Only auto-add admin as team member if this is a brand new team (no existing members)
-      const hasExistingTeam = teamMembers.length > 0
-      
-      if (!hasExistingTeam) {
-        const { error: memberError } = await supabase
-          .from('team_members')
-          .insert({
-            user_id: user.id,
-            team_invite_id: data.id,
-            admin_id: user.id
-          })
-
-        if (memberError) {
-          console.warn('Admin auto-join failed:', memberError)
-          // Don't throw error here, just log it
-        }
-      } else {
-        // For existing teams, update all existing members to use the new invite ID
-        // This maintains team continuity across invite code regenerations
-        const { error: updateError } = await supabase
-          .from('team_members')
-          .update({ team_invite_id: data.id })
-          .eq('admin_id', user.id)
-
-        if (updateError) {
-          console.warn('Failed to update existing team members:', updateError)
-        }
+      if (error) {
+        console.error('❌ Database save failed:', error)
+        throw new Error(`Failed to save team code: ${error.message}`)
       }
 
+      console.log('✅ Team code saved to database:', data)
+
+      // Auto-add the admin as a team member
+      const { data: adminMember, error: adminError } = await supabase
+        .from('team_members')
+        .insert({
+          user_id: user.id,
+          team_invite_id: data.id,
+          role: 'admin',
+          status: 'active',
+          permissions: {
+            can_invite: true,
+            can_manage_tasks: true,
+            can_view_analytics: true,
+            can_edit_team: true,
+            can_remove_members: true
+          }
+        })
+        .select()
+        .single()
+
+      if (adminError) {
+        console.warn('⚠️ Failed to add admin as team member:', adminError)
+      } else {
+        console.log('✅ Admin added as team member:', adminMember)
+      }
+
+      // Update state
       setInviteCode(code)
       setCurrentInvite(data)
       
-      // Refresh team members list
+      // Save to localStorage as backup
+      localStorage.setItem(`team_invite_code_${user.id}`, code)
+      
+      // Load team members to show the admin
       await loadTeamMembers()
       
       // Show success message
-      const message = hasExistingTeam ? 'New invite code generated for existing team!' : 'Team invite code generated successfully!'
-      showAlert('Success', message, 'success')
-      console.log(message)
+      showAlert('Success', 'Team invite code generated successfully! Code never expires.', 'success')
+      console.log('✅ Code generation completed:', code)
     } catch (error) {
       console.error('Error generating invite code:', error)
       showAlert('Error', 'Failed to generate invite code. Please try again.', 'error')
@@ -206,38 +232,56 @@ export const Teams: React.FC = () => {
 
     try {
       setLoadingMembers(true)
+      console.log('🔍 Loading team members for user:', user.id)
 
-      // Get team members who joined through this user's invite codes
+      // First get the user's team invite to find team members
+      const { data: invites, error: inviteError } = await supabase
+        .from('team_invites')
+        .select('id, team_name')
+        .eq('created_by', user.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (inviteError) {
+        console.error('Error fetching team invites:', inviteError)
+        setTeamMembers([])
+        return
+      }
+
+      if (!invites || invites.length === 0) {
+        console.log('No team found for this user')
+        setTeamMembers([])
+        return
+      }
+
+      const teamInviteId = invites[0].id
+      console.log('Found team invite:', invites[0])
+
+      // Get all team members for this team (including admin)
       const { data: members, error: membersError } = await supabase
         .from('team_members')
-        .select('*')
-        .eq('admin_id', user.id)
+        .select(`
+          *,
+          profiles!inner(
+            id,
+            email,
+            full_name,
+            avatar_url
+          )
+        `)
+        .eq('team_invite_id', teamInviteId)
+        .eq('status', 'active')
+        .order('joined_at', { ascending: true })
 
-      if (membersError) throw membersError
-
-      // Get profiles for each member separately
-      if (members && members.length > 0) {
-        const userIds = members.map(member => member.user_id)
-        const { data: profiles, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id, email, name')
-          .in('id', userIds)
-
-        if (profilesError) {
-          console.warn('Could not load profiles:', profilesError)
-          // Continue without profiles data
-          setTeamMembers(members.map(member => ({ ...member, profiles: null })))
-        } else {
-          // Merge profiles data with members
-          const membersWithProfiles = members.map(member => {
-            const profile = profiles.find(p => p.id === member.user_id)
-            return { ...member, profiles: profile || null }
-          })
-          setTeamMembers(membersWithProfiles)
-        }
-      } else {
+      if (membersError) {
+        console.error('Error fetching team members:', membersError)
         setTeamMembers([])
+        return
       }
+
+      console.log('✅ Loaded team members:', members)
+      setTeamMembers(members || [])
     } catch (error) {
       console.error('Error loading team members:', error)
       setTeamMembers([])
@@ -304,6 +348,7 @@ export const Teams: React.FC = () => {
         .from('team_invites')
         .select('*')
         .eq('code', joinCode.toUpperCase())
+        .eq('is_active', true)
         .single()
 
       if (inviteError) {
@@ -323,18 +368,12 @@ export const Teams: React.FC = () => {
 
       console.log('Found invite:', inviteData)
 
-      // Check if the invite is expired
-      if (new Date(inviteData.expires_at) <= new Date()) {
-        showAlert('Expired Code', 'This team code has expired. Please ask the team admin to generate a new code.', 'warning')
-        return
-      }
-
-      // Check if user is already a member of ANY team by this admin (team continuity)
+      // Check if user is already a member of this team
       const { data: existingMember } = await supabase
         .from('team_members')
         .select('*')
         .eq('user_id', user.id)
-        .eq('admin_id', inviteData.created_by)
+        .eq('team_invite_id', inviteData.id)
         .single()
 
       if (existingMember) {
@@ -350,32 +389,61 @@ export const Teams: React.FC = () => {
         return
       }
 
-      console.log('Adding user to team...')
+      console.log('Adding user to team...', {
+        user_id: user.id,
+        team_invite_id: inviteData.id,
+        team_name: inviteData.team_name
+      })
 
       // Add user as team member
-      const { error: memberError } = await supabase
+      const { data: memberData, error: memberError } = await supabase
         .from('team_members')
         .insert({
           user_id: user.id,
           team_invite_id: inviteData.id,
-          admin_id: inviteData.created_by
+          role: 'member',
+          status: 'active',
+          permissions: {
+            can_invite: false,
+            can_manage_tasks: true,
+            can_view_analytics: true
+          }
         })
+        .select()
+        .single()
 
       if (memberError) {
-        console.error('Member insert error:', memberError)
-        throw memberError
+        console.error('❌ Member insert error:', memberError)
+        throw new Error(`Failed to join team: ${memberError.message}`)
       }
 
-      showAlert('Success!', 'Successfully joined the team!', 'success')
+      console.log('✅ Successfully joined team:', memberData)
+
+      // Update team member count
+      const { error: updateError } = await supabase
+        .from('team_invites')
+        .update({ 
+          current_members: inviteData.current_members + 1,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', inviteData.id)
+
+      if (updateError) {
+        console.warn('⚠️ Failed to update member count:', updateError)
+      }
+
+      // Refresh team members list to show the new member
+      await loadTeamMembers()
+
+      showAlert('Success!', `Successfully joined ${inviteData.team_name}!`, 'success')
       setJoinCode('')
-      console.log('Successfully joined team')
+      console.log('✅ Team join completed for:', inviteData.team_name)
     } catch (error) {
       console.error('Error joining team:', error)
       showAlert('Join Failed', `Failed to join team: ${error.message || 'Please try again.'}`, 'error')
     }
   }
 
-  const isLinkActive = currentInvite && new Date(currentInvite.expires_at) > new Date()
   const hasExistingTeam = teamMembers.length > 0
   const isLinkDisabled = false // Always allow generating new codes
 
@@ -405,25 +473,20 @@ export const Teams: React.FC = () => {
             </div>
 
             <div className="space-y-4">
-              <button 
-                onClick={generateTeamInviteCode} 
-                disabled={loading}
-                className={`w-full px-4 py-2 sm:py-3 rounded-md font-medium transition-colors duration-200 flex items-center justify-center touch-manipulation ${
-                  loading 
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                    : hasExistingTeam && !isLinkActive
-                    ? 'bg-orange-600 text-white hover:bg-orange-700'
-                    : hasExistingTeam && isLinkActive
-                    ? 'bg-green-600 text-white hover:bg-green-700'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}
-              >
-                <Mail className="w-4 h-4 mr-2" />
-                {loading ? 'Generating...' : 
-                 hasExistingTeam && !isLinkActive ? 'Generate New Code for Team' :
-                 hasExistingTeam && isLinkActive ? 'Generate New Code (Current Active)' :
-                 'Create Team Invite Code'}
-              </button>
+              {!inviteCode ? (
+                <button 
+                  onClick={generateTeamInviteCode} 
+                  disabled={loading}
+                  className={`w-full px-4 py-3 rounded-md font-medium transition-colors duration-200 flex items-center justify-center ${
+                    loading 
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                      : 'bg-orange-600 text-white hover:bg-orange-700'
+                  }`}
+                >
+                  <Mail className="w-4 h-4 mr-2" />
+                  {loading ? 'Generating...' : 'Create Team Invite Code'}
+                </button>
+              ) : null}
 
               {inviteCode && (
                 <div className="space-y-2">
@@ -451,15 +514,9 @@ export const Teams: React.FC = () => {
                     <p className="text-xs text-gray-600">
                       Share this 6-digit code with team members to invite them to join your team.
                     </p>
-                    {currentInvite && (
-                      <p className="text-xs text-gray-500">
-                        {isLinkActive ? (
-                          <>✅ Code expires on {new Date(currentInvite.expires_at).toLocaleDateString()}</>
-                        ) : (
-                          <>⚠️ Code expired on {new Date(currentInvite.expires_at).toLocaleDateString()}. Generate a new code above.</>
-                        )}
-                      </p>
-                    )}
+                    <p className="text-xs text-green-600 font-medium">
+                      ✅ Code generated successfully! This code never expires.
+                    </p>
                   </div>
                 </div>
               )}
