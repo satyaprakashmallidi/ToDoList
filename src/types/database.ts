@@ -406,6 +406,560 @@ export interface Database {
           updated_at?: string | null
         }
       }
+      channels: {
+        Row: {
+          id: string
+          team_invite_id: string | null
+          name: string
+          description: string | null
+          channel_type: 'text' | 'voice' | 'announcement' | null
+          category: string | null
+          is_private: boolean | null
+          is_archived: boolean | null
+          created_by: string | null
+          settings: Record<string, unknown> | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          team_invite_id?: string | null
+          name: string
+          description?: string | null
+          channel_type?: 'text' | 'voice' | 'announcement' | null
+          category?: string | null
+          is_private?: boolean | null
+          is_archived?: boolean | null
+          created_by?: string | null
+          settings?: Record<string, unknown> | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          team_invite_id?: string | null
+          name?: string
+          description?: string | null
+          channel_type?: 'text' | 'voice' | 'announcement' | null
+          category?: string | null
+          is_private?: boolean | null
+          is_archived?: boolean | null
+          created_by?: string | null
+          settings?: Record<string, unknown> | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
+      channel_members: {
+        Row: {
+          id: string
+          channel_id: string | null
+          user_id: string | null
+          role: 'admin' | 'moderator' | 'member' | null
+          can_post: boolean | null
+          can_manage: boolean | null
+          added_by: string | null
+          joined_at: string | null
+          left_at: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          channel_id?: string | null
+          user_id?: string | null
+          role?: 'admin' | 'moderator' | 'member' | null
+          can_post?: boolean | null
+          can_manage?: boolean | null
+          added_by?: string | null
+          joined_at?: string | null
+          left_at?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          channel_id?: string | null
+          user_id?: string | null
+          role?: 'admin' | 'moderator' | 'member' | null
+          can_post?: boolean | null
+          can_manage?: boolean | null
+          added_by?: string | null
+          joined_at?: string | null
+          left_at?: string | null
+          created_at?: string | null
+        }
+      }
+      channel_messages: {
+        Row: {
+          id: string
+          channel_id: string
+          sender_id: string
+          content: string
+          message_type: 'text' | 'image' | 'file' | 'system' | null
+          file_url: string | null
+          file_name: string | null
+          file_size: number | null
+          reply_to_id: string | null
+          is_edited: boolean | null
+          is_deleted: boolean | null
+          deleted_by: string | null
+          deleted_at: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          channel_id: string
+          sender_id: string
+          content: string
+          message_type?: 'text' | 'image' | 'file' | 'system' | null
+          file_url?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          reply_to_id?: string | null
+          is_edited?: boolean | null
+          is_deleted?: boolean | null
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          channel_id?: string
+          sender_id?: string
+          content?: string
+          message_type?: 'text' | 'image' | 'file' | 'system' | null
+          file_url?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          reply_to_id?: string | null
+          is_edited?: boolean | null
+          is_deleted?: boolean | null
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
+      conversations: {
+        Row: {
+          id: string
+          created_at: string | null
+          updated_at: string | null
+          last_message_at: string | null
+        }
+        Insert: {
+          id?: string
+          created_at?: string | null
+          updated_at?: string | null
+          last_message_at?: string | null
+        }
+        Update: {
+          id?: string
+          created_at?: string | null
+          updated_at?: string | null
+          last_message_at?: string | null
+        }
+      }
+      direct_conversations: {
+        Row: {
+          id: string
+          user1_id: string | null
+          user2_id: string | null
+          is_active: boolean | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          user1_id?: string | null
+          user2_id?: string | null
+          is_active?: boolean | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          user1_id?: string | null
+          user2_id?: string | null
+          is_active?: boolean | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "direct_conversations_user1_id_fkey"
+            columns: ["user1_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "direct_conversations_user2_id_fkey"
+            columns: ["user2_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      direct_messages: {
+        Row: {
+          id: string
+          conversation_id: string
+          sender_id: string
+          content: string
+          message_type: string | null
+          file_url: string | null
+          file_name: string | null
+          file_size: number | null
+          reply_to_id: string | null
+          is_edited: boolean | null
+          is_deleted: boolean | null
+          deleted_by: string | null
+          deleted_at: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          conversation_id: string
+          sender_id: string
+          content: string
+          message_type?: string | null
+          file_url?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          reply_to_id?: string | null
+          is_edited?: boolean | null
+          is_deleted?: boolean | null
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          conversation_id?: string
+          sender_id?: string
+          content?: string
+          message_type?: string | null
+          file_url?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          reply_to_id?: string | null
+          is_edited?: boolean | null
+          is_deleted?: boolean | null
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "direct_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "direct_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "direct_messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      posts: {
+        Row: {
+          id: string
+          author_id: string | null
+          channel_id: string | null
+          title: string | null
+          content: string
+          post_type: 'update' | 'announcement' | 'idea' | 'discussion' | null
+          tags: string[] | null
+          is_published: boolean | null
+          is_pinned: boolean | null
+          view_count: number | null
+          created_at: string | null
+          updated_at: string | null
+          published_at: string | null
+        }
+        Insert: {
+          id?: string
+          author_id?: string | null
+          channel_id?: string | null
+          title?: string | null
+          content: string
+          post_type?: 'update' | 'announcement' | 'idea' | 'discussion' | null
+          tags?: string[] | null
+          is_published?: boolean | null
+          is_pinned?: boolean | null
+          view_count?: number | null
+          created_at?: string | null
+          updated_at?: string | null
+          published_at?: string | null
+        }
+        Update: {
+          id?: string
+          author_id?: string | null
+          channel_id?: string | null
+          title?: string | null
+          content?: string
+          post_type?: 'update' | 'announcement' | 'idea' | 'discussion' | null
+          tags?: string[] | null
+          is_published?: boolean | null
+          is_pinned?: boolean | null
+          view_count?: number | null
+          created_at?: string | null
+          updated_at?: string | null
+          published_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posts_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      post_comments: {
+        Row: {
+          id: string
+          post_id: string | null
+          author_id: string | null
+          content: string
+          reply_to_id: string | null
+          is_edited: boolean | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          post_id?: string | null
+          author_id?: string | null
+          content: string
+          reply_to_id?: string | null
+          is_edited?: boolean | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          post_id?: string | null
+          author_id?: string | null
+          content?: string
+          reply_to_id?: string | null
+          is_edited?: boolean | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_comments_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_comments_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      post_reactions: {
+        Row: {
+          id: string
+          post_id: string | null
+          user_id: string | null
+          reaction_type: 'like' | 'love' | 'laugh' | 'sad' | 'angry' | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          post_id?: string | null
+          user_id?: string | null
+          reaction_type?: 'like' | 'love' | 'laugh' | 'sad' | 'angry' | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          post_id?: string | null
+          user_id?: string | null
+          reaction_type?: 'like' | 'love' | 'laugh' | 'sad' | 'angry' | null
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_reactions_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_reactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      message_reads: {
+        Row: {
+          id: string
+          message_id: string | null
+          user_id: string | null
+          read_at: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          message_id?: string | null
+          user_id?: string | null
+          read_at?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          message_id?: string | null
+          user_id?: string | null
+          read_at?: string | null
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_reads_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_reads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      messages: {
+        Row: {
+          id: string
+          sender_id: string | null
+          channel_id: string | null
+          conversation_id: string | null
+          content: string
+          message_type: string | null
+          attachments: any | null
+          reply_to_id: string | null
+          thread_id: string | null
+          is_edited: boolean | null
+          is_deleted: boolean | null
+          is_pinned: boolean | null
+          created_at: string | null
+          updated_at: string | null
+          edited_at: string | null
+          deleted_at: string | null
+          edited: boolean | null
+          deleted: boolean | null
+        }
+        Insert: {
+          id?: string
+          sender_id?: string | null
+          channel_id?: string | null
+          conversation_id?: string | null
+          content: string
+          message_type?: string | null
+          attachments?: any | null
+          reply_to_id?: string | null
+          thread_id?: string | null
+          is_edited?: boolean | null
+          is_deleted?: boolean | null
+          is_pinned?: boolean | null
+          created_at?: string | null
+          updated_at?: string | null
+          edited_at?: string | null
+          deleted_at?: string | null
+          edited?: boolean | null
+          deleted?: boolean | null
+        }
+        Update: {
+          id?: string
+          sender_id?: string | null
+          channel_id?: string | null
+          conversation_id?: string | null
+          content?: string
+          message_type?: string | null
+          attachments?: any | null
+          reply_to_id?: string | null
+          thread_id?: string | null
+          is_edited?: boolean | null
+          is_deleted?: boolean | null
+          is_pinned?: boolean | null
+          created_at?: string | null
+          updated_at?: string | null
+          edited_at?: string | null
+          deleted_at?: string | null
+          edited?: boolean | null
+          deleted?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_conversations_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_reply_to_id_fkey"
+            columns: ["reply_to_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
     }
   }
 }

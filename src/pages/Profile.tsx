@@ -416,8 +416,8 @@ export const Profile: React.FC = () => {
   return (
     <div className="min-h-screen bg-transparent">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 py-4">
-        <div className="max-w-full px-4 sm:px-6 lg:px-8">
+      <div className="bg-white border-b border-gray-200 py-2">
+        <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-gray-900">
@@ -528,12 +528,12 @@ export const Profile: React.FC = () => {
       </div>
 
       {/* Hero Section - Transparent */}
-      <div className="bg-transparent h-32"></div>
+      <div className="bg-transparent h-12"></div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-20 pb-8">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-4 pb-8">
         {/* Profile Header Card */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
           <div className="flex items-center space-x-4">
             <div className="relative">
               <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-2xl font-semibold">

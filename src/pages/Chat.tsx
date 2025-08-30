@@ -29,14 +29,21 @@ import {
   Code,
   Mic,
   Video,
+  Camera,
   X,
   MoreHorizontal,
   Clock,
   Trash2,
-  Eye
+  Eye,
+  Heart,
+  Laugh,
+  Frown,
+  Angry,
+  ThumbsUp
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useDrafts } from '../contexts/DraftContext';
+import { useChannels } from '../hooks/useChannels';
+import { ChannelCreateModal } from '../components/ChannelCreateModal';
 import { supabase } from '../lib/supabase';
 
 interface Channel {
@@ -90,36 +97,52 @@ interface SidebarItem {
 
 export const Chat: React.FC = () => {
   const { user } = useAuth();
-  const { 
-    drafts, 
-    sentMessages, 
-    scheduledMessages,
-    addDraft, 
-    updateDraft, 
-    deleteDraft, 
-    sendDraft,
-    addScheduledMessage,
-    cancelScheduledMessage,
-    searchDrafts,
-    searchSent,
-    searchScheduled
-  } = useDrafts();
+  const {
+    channels: dbChannels,
+    channelMessages,
+    directConversations,
+    directMessages,
+    channelPosts,
+    loading: channelsLoading,
+    error: channelsError,
+    createChannel,
+    loadChannelMessages,
+    sendChannelMessage,
+    addChannelMembers,
+    sendDirectMessage,
+    loadDirectMessages,
+    getOrCreateDirectConversation,
+    loadChannelPosts,
+    createChannelPost,
+    togglePostReaction,
+    getPostReactions,
+    addPostComment,
+    getPostComments,
+    markMessageAsRead,
+    markChannelMessagesAsRead,
+    markDirectMessagesAsRead,
+    getUnreadReplies,
+    getReadReplies,
+    getSentMessages
+  } = useChannels();
   const [repliesTab, setRepliesTab] = useState<'unread' | 'read'>('unread');
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [unreadReplies, setUnreadReplies] = useState<any[]>([]);
+  const [readReplies, setReadReplies] = useState<any[]>([]);
   const [selectedDM, setSelectedDM] = useState<string | null>(null);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
   const [showChannelDropdown, setShowChannelDropdown] = useState(true);
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [activeSidebarItem, setActiveSidebarItem] = useState<string>('replies');
   const [postContent, setPostContent] = useState('');
   const [postTitle, setPostTitle] = useState('');
+  const [channelPostTitle, setChannelPostTitle] = useState('');
+  const [channelPostContent, setChannelPostContent] = useState('');
   const [selectedPostChannel, setSelectedPostChannel] = useState<string>('Select Channel');
   const [showNewPostModal, setShowNewPostModal] = useState(false);
   const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
-  const [newChannelName, setNewChannelName] = useState('');
-  const [newChannelDescription, setNewChannelDescription] = useState('');
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const [creatingChannel, setCreatingChannel] = useState(false);
   const [channelView, setChannelView] = useState<'channel' | 'posts'>('channel');
   const [showAddMembersModal, setShowAddMembersModal] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -129,12 +152,20 @@ export const Chat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const presenceChannelRef = useRef<any>(null);
   
-  // Drafts & Sent state
-  const [draftsTab, setDraftsTab] = useState<'drafts' | 'sent' | 'scheduled'>('drafts');
-  const [draftsSearchQuery, setDraftsSearchQuery] = useState('');
-  const [editingDraft, setEditingDraft] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState('');
+  // Sent Messages state
+  const [sentSearchQuery, setSentSearchQuery] = useState('');
+  const [sentMessages, setSentMessages] = useState<any[]>([]);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  
+  // Post reactions and comments state
+  const [postReactions, setPostReactions] = useState<Record<string, any[]>>({});
+  const [postComments, setPostComments] = useState<Record<string, any[]>>({});
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [showComments, setShowComments] = useState<Record<string, boolean>>({});
+  
+  // Activity state
+  const [activityTab, setActivityTab] = useState<'mentions' | 'reactions' | 'assigned'>('mentions');
+  const [activityReactions, setActivityReactions] = useState<any[]>([]);
 
   // Sidebar items for replies section
   const sidebarItems: SidebarItem[] = [
@@ -142,7 +173,7 @@ export const Chat: React.FC = () => {
     { id: 'posts', label: 'Posts', icon: <FileText className="w-4 h-4" /> },
     { id: 'followups', label: 'FollowUps', icon: <Users className="w-4 h-4" /> },
     { id: 'activity', label: 'Activity', icon: <Activity className="w-4 h-4" /> },
-    { id: 'drafts', label: 'Drafts & Sent', icon: <Edit3 className="w-4 h-4" />, count: 1 }
+    { id: 'drafts', label: 'Sent Messages', icon: <Edit3 className="w-4 h-4" /> }
   ];
 
   // Fetch team members when component mounts and setup presence
@@ -155,88 +186,73 @@ export const Chat: React.FC = () => {
     return () => {
       // Cleanup presence subscription
       if (presenceChannelRef.current) {
-        supabase.removeChannel(presenceChannelRef.current);
+        if (presenceChannelRef.current.cleanup) {
+          presenceChannelRef.current.cleanup();
+        }
+        if (presenceChannelRef.current.channel) {
+          supabase.removeChannel(presenceChannelRef.current.channel);
+        }
       }
     };
   }, [user]);
 
   const fetchTeamMembers = async () => {
     try {
-      // Fetch team members from the database - both as admin and as member
-      const [adminTeams, memberTeams] = await Promise.all([
-        // Teams where current user is admin
-        supabase
-          .from('team_members')
-          .select('user_id, profiles(id, email, full_name, name, avatar_url)')
-          .eq('admin_id', user?.id),
-        // Teams where current user is a member
-        supabase
-          .from('team_members')
-          .select('admin_id, team_invite_id, profiles!team_members_admin_id_fkey(id, email, full_name, name, avatar_url)')
-          .eq('user_id', user?.id)
-      ]);
+      // Step 1: Get team members where current user is involved
+      const { data: teamMemberships, error: teamError } = await supabase
+        .from('team_members')
+        .select('user_id, admin_id, team_invite_id')
+        .or(`user_id.eq.${user?.id},admin_id.eq.${user?.id}`);
 
+      if (teamError) {
+        console.error('Error fetching team memberships:', teamError);
+        return;
+      }
+
+      if (!teamMemberships || teamMemberships.length === 0) {
+        setTeamMembers([]);
+        return;
+      }
+
+      // Step 2: Get all unique user IDs from the team memberships
+      const allUserIds = new Set<string>();
+      teamMemberships.forEach((membership: any) => {
+        if (membership.user_id) allUserIds.add(membership.user_id);
+        if (membership.admin_id) allUserIds.add(membership.admin_id);
+      });
+
+      // Step 3: Get profile information for all these users
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, name, avatar_url')
+        .in('id', Array.from(allUserIds));
+
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+        return;
+      }
+
+      // Step 4: Create team members list
       const members: TeamMember[] = [];
       const memberIds = new Set<string>();
 
-      // Add members from teams where user is admin
-      if (adminTeams.data) {
-        adminTeams.data.forEach(member => {
-          if (member.profiles && !memberIds.has(member.profiles.id)) {
-            memberIds.add(member.profiles.id);
+      if (profiles) {
+        profiles.forEach((profile: any) => {
+          if (!memberIds.has(profile.id) && profile.id !== user?.id) {
+            memberIds.add(profile.id);
+            // Check if this user is an admin in any team the current user is part of
+            const isAdmin = teamMemberships.some((tm: any) => tm.admin_id === profile.id);
+            
             members.push({
-              id: member.profiles.id,
-              name: member.profiles.name || member.profiles.full_name || 'Unknown',
-              email: member.profiles.email || '',
-              avatar: member.profiles.avatar_url || '',
+              id: profile.id,
+              name: profile.name || profile.full_name || 'Unknown',
+              email: profile.email || '',
+              avatar: profile.avatar_url || '',
               status: 'offline',
-              role: 'team member'
+              role: isAdmin ? 'team admin' : 'team member'
             });
           }
         });
-      }
-
-      // Add admins from teams where user is a member
-      if (memberTeams.data) {
-        memberTeams.data.forEach(team => {
-          if (team.profiles && !memberIds.has(team.profiles.id)) {
-            memberIds.add(team.profiles.id);
-            members.push({
-              id: team.profiles.id,
-              name: team.profiles.name || team.profiles.full_name || 'Admin',
-              email: team.profiles.email || '',
-              avatar: team.profiles.avatar_url || '',
-              status: 'offline',
-              role: 'team admin'
-            });
-          }
-        });
-      }
-
-      // Also fetch other team members from the same teams
-      if (memberTeams.data && memberTeams.data.length > 0) {
-        const teamInviteIds = memberTeams.data.map(t => t.team_invite_id);
-        const { data: otherMembers } = await supabase
-          .from('team_members')
-          .select('user_id, profiles(id, email, full_name, name, avatar_url)')
-          .in('team_invite_id', teamInviteIds)
-          .neq('user_id', user?.id);
-
-        if (otherMembers) {
-          otherMembers.forEach(member => {
-            if (member.profiles && !memberIds.has(member.profiles.id)) {
-              memberIds.add(member.profiles.id);
-              members.push({
-                id: member.profiles.id,
-                name: member.profiles.name || member.profiles.full_name || 'Unknown',
-                email: member.profiles.email || '',
-                avatar: member.profiles.avatar_url || '',
-                status: 'offline',
-                role: 'team member'
-              });
-            }
-          });
-        }
       }
 
       setTeamMembers(members);
@@ -247,10 +263,12 @@ export const Chat: React.FC = () => {
 
   // Setup real-time presence tracking
   const setupPresence = () => {
+    if (!user?.id) return;
+    
     const channel = supabase.channel('online-users', {
       config: {
         presence: {
-          key: user?.id || ''
+          key: user.id
         }
       }
     });
@@ -258,6 +276,7 @@ export const Chat: React.FC = () => {
     // Track current user's presence
     channel
       .on('presence', { event: 'sync' }, () => {
+        console.log('Presence sync triggered');
         const state = channel.presenceState();
         const onlineUserIds = new Set<string>();
         
@@ -267,12 +286,15 @@ export const Chat: React.FC = () => {
           }
         });
         
+        console.log('Online users updated:', onlineUserIds);
         setOnlineUsers(onlineUserIds);
       })
       .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        console.log('User joined:', key);
         setOnlineUsers(prev => new Set([...prev, key]));
       })
       .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+        console.log('User left:', key);
         setOnlineUsers(prev => {
           const updated = new Set(prev);
           updated.delete(key);
@@ -280,16 +302,50 @@ export const Chat: React.FC = () => {
         });
       })
       .subscribe(async (status) => {
+        console.log('Presence subscription status:', status);
         if (status === 'SUBSCRIBED') {
           // Track this user as online
           await channel.track({
             online_at: new Date().toISOString(),
-            user_id: user?.id
+            user_id: user.id,
+            status: 'online'
           });
+          console.log('Started tracking presence for user:', user.id);
         }
       });
 
-    presenceChannelRef.current = channel;
+    // Clean up on browser close/beforeunload
+    const handleBeforeUnload = async () => {
+      console.log('Browser closing, untracking presence');
+      await channel.untrack();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // Also untrack when page becomes hidden (mobile/tab switching)
+    const handleVisibilityChange = async () => {
+      if (document.hidden) {
+        console.log('Page hidden, untracking presence');
+        await channel.untrack();
+      } else {
+        console.log('Page visible, tracking presence again');
+        await channel.track({
+          online_at: new Date().toISOString(),
+          user_id: user.id,
+          status: 'online'
+        });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    presenceChannelRef.current = {
+      channel,
+      cleanup: () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   };
 
   // Get status for a team member
@@ -298,131 +354,296 @@ export const Chat: React.FC = () => {
   };
 
   // Handle channel creation
-  const handleCreateChannel = () => {
-    if (newChannelName.trim()) {
-      const newChannel: Channel = {
-        id: Date.now().toString(),
-        name: newChannelName.toLowerCase().replace(/\s+/g, '-'),
-        type: 'text',
-        description: newChannelDescription,
-        memberCount: 1,
-        members: []
-      };
-      setChannels([...channels, newChannel]);
-      setNewChannelName('');
-      setNewChannelDescription('');
-      setShowCreateChannelModal(false);
-      setSelectedChannel(newChannel);
+  const handleCreateChannel = async (data: {
+    name: string;
+    description?: string;
+    type: 'text' | 'voice' | 'announcement';
+    isPrivate: boolean;
+    category?: string;
+  }) => {
+    setCreatingChannel(true);
+    try {
+      const channelId = await createChannel(
+        data.name,
+        data.description,
+        data.type,
+        data.isPrivate,
+        data.category
+      );
+      
+      if (channelId) {
+        setShowCreateChannelModal(false);
+        // Find and select the newly created channel
+        const newChannel = dbChannels.find(ch => ch.id === channelId);
+        if (newChannel) {
+          setSelectedChannel({
+            id: newChannel.id,
+            name: newChannel.name,
+            type: newChannel.channel_type as 'text' | 'voice',
+            description: newChannel.description || undefined,
+            memberCount: newChannel.member_count || 1
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to create channel:', error);
+    } finally {
+      setCreatingChannel(false);
     }
   };
 
   // Handle adding members to channel
-  const handleAddMembers = () => {
+  const handleAddMembers = async () => {
     if (selectedChannel && selectedMembers.length > 0) {
-      const membersToAdd = teamMembers.filter(member => selectedMembers.includes(member.id));
-      const updatedChannel = {
-        ...selectedChannel,
-        members: [...(selectedChannel.members || []), ...membersToAdd],
-        memberCount: (selectedChannel.memberCount || 0) + selectedMembers.length
-      };
-      
-      // Update the channel in the channels list
-      setChannels(channels.map(ch => ch.id === selectedChannel.id ? updatedChannel : ch));
-      setSelectedChannel(updatedChannel);
-      
-      // Reset selection and close modal
-      setSelectedMembers([]);
-      setShowAddMembersModal(false);
+      try {
+        console.log('Adding members to channel:', selectedChannel.id, selectedMembers);
+        
+        // Add members to the channel in the database
+        const success = await addChannelMembers(selectedChannel.id, selectedMembers);
+        
+        if (success) {
+          console.log('Members added successfully');
+          
+          // Update local state optimistically
+          const membersToAdd = teamMembers.filter(member => selectedMembers.includes(member.id));
+          const updatedChannel = {
+            ...selectedChannel,
+            members: [...(selectedChannel.members || []), ...membersToAdd],
+            memberCount: (selectedChannel.memberCount || 0) + selectedMembers.length
+          };
+          
+          setSelectedChannel(updatedChannel);
+          
+          // Reset selection and close modal
+          setSelectedMembers([]);
+          setShowAddMembersModal(false);
+        } else {
+          console.error('Failed to add members to channel');
+          // You could add a toast notification here
+        }
+      } catch (error) {
+        console.error('Error adding members:', error);
+      }
     }
   };
 
-  // Transform team members to direct messages format
-  const directMessages: DirectMessage[] = teamMembers.map(member => ({
-    id: member.id,
-    name: member.name,
-    status: getMemberStatus(member.id) as 'online' | 'offline',
-    avatar: member.avatar,
-    lastMessage: '',
-    unread: false
-  }));
-
-  // Add current user to the list
-  if (user) {
-    directMessages.push({
-      id: user.id,
-      name: user.email?.split('@')[0] || 'You',
-      status: 'online',
-      lastMessage: 'You',
+  // Transform team members to direct messages format (excluding current user)
+  const availableDirectMessages: DirectMessage[] = teamMembers
+    .filter(member => member.id !== user?.id) // Exclude current user
+    .map(member => ({
+      id: member.id,
+      name: member.name,
+      status: getMemberStatus(member.id) as 'online' | 'offline',
+      avatar: member.avatar,
+      lastMessage: '',
       unread: false
-    });
-  }
+    }));
 
-  // Generate sample messages or fetch real messages
+  // Current user is excluded from direct messages list
+
+  // Handle DM message loading (channels are handled by useChannels hook)
   useEffect(() => {
-    if (selectedChannel) {
-      // Sample messages for channels
-      const sampleMessages: Message[] = [
-        {
-          id: '1',
-          userId: '1',
-          userName: 'Team Member',
-          content: 'Hey everyone! Just wanted to share the latest updates on the project.',
-          timestamp: new Date(Date.now() - 3600000),
-          reactions: [
-            { emoji: '👍', count: 3, reacted: false },
-            { emoji: '🎉', count: 1, reacted: true }
-          ]
-        },
-        {
-          id: '2',
-          userId: '2',
-          userName: 'Another Member',
-          content: 'That sounds great! I\'ve been working on the implementation and we\'re making good progress.',
-          timestamp: new Date(Date.now() - 1800000),
-          edited: true
-        },
-        {
-          id: '3',
-          userId: user?.id || '3',
-          userName: 'You',
-          content: 'I\'ll review the code and provide feedback by EOD.',
-          timestamp: new Date(Date.now() - 900000)
+    const loadDMMessages = async () => {
+      if (selectedDM && !selectedChannel && user) {
+        // Get or create conversation ID for this DM
+        const conversationId = await getOrCreateDirectConversation(selectedDM);
+        if (conversationId) {
+          setCurrentConversationId(conversationId);
+          // Load messages for this conversation
+          await loadDirectMessages(conversationId);
         }
-      ];
-      setMessages(sampleMessages);
-    } else if (selectedDM) {
-      // Sample messages for DMs
-      const dmUser = directMessages.find(dm => dm.id === selectedDM);
-      if (dmUser && dmUser.id !== user?.id) {
-        const dmMessages: Message[] = [
-          {
-            id: '1',
-            userId: selectedDM,
-            userName: dmUser.name,
-            content: 'Hey! How\'s the project going?',
-            timestamp: new Date(Date.now() - 7200000)
-          },
-          {
-            id: '2',
-            userId: user?.id || 'current',
-            userName: 'You',
-            content: 'Going well! Just finished the new feature.',
-            timestamp: new Date(Date.now() - 3600000)
-          },
-          {
-            id: '3',
-            userId: selectedDM,
-            userName: dmUser.name,
-            content: 'That\'s awesome! Can\'t wait to see it in action.',
-            timestamp: new Date(Date.now() - 1800000)
-          }
-        ];
-        setMessages(dmMessages);
-      } else {
-        setMessages([]);
+      } else if (selectedChannel) {
+        // Clear DM state for channels since they're handled by useChannels hook
+        setCurrentConversationId(null);
       }
+    };
+
+    loadDMMessages();
+  }, [selectedDM, selectedChannel, user?.id, getOrCreateDirectConversation, loadDirectMessages]);
+
+  // Load posts when channel posts tab is active
+  useEffect(() => {
+    console.log('Posts effect triggered:', { selectedChannel, channelView, activeSidebarItem });
+    if (selectedChannel && channelView === 'posts') {
+      console.log('Loading posts for channel posts tab:', selectedChannel.id);
+      loadChannelPosts(selectedChannel.id);
     }
-  }, [selectedChannel, selectedDM, user, directMessages]);
+  }, [selectedChannel, channelView, loadChannelPosts]);
+
+  // Auto-select first channel when opening posts section
+  useEffect(() => {
+    console.log('Auto-select channel effect triggered:', { activeSidebarItem, selectedChannel, dbChannels });
+    if (activeSidebarItem === 'posts' && !selectedChannel && dbChannels.length > 0) {
+      console.log('Auto-selecting first channel for posts:', dbChannels[0]);
+      setSelectedChannel({
+        id: dbChannels[0].id,
+        name: dbChannels[0].name,
+        type: dbChannels[0].channel_type as 'text' | 'voice',
+        description: dbChannels[0].description || undefined,
+        memberCount: dbChannels[0].member_count || 1
+      });
+      setActiveSidebarItem('posts');
+    }
+  }, [activeSidebarItem, selectedChannel, dbChannels]);
+
+  // Load posts when navigating to main posts page
+  useEffect(() => {
+    console.log('Main posts page effect triggered:', { activeSidebarItem, selectedChannel });
+    if (activeSidebarItem === 'posts' && selectedChannel) {
+      console.log('Loading posts for main posts page:', selectedChannel.id);
+      loadChannelPosts(selectedChannel.id);
+    }
+  }, [activeSidebarItem, selectedChannel, loadChannelPosts]);
+
+  // Load replies when replies tab is active
+  useEffect(() => {
+    const loadReplies = async () => {
+      if (activeSidebarItem === 'replies') {
+        console.log('Loading replies for replies tab');
+        try {
+          const [unread, read] = await Promise.all([
+            getUnreadReplies(),
+            getReadReplies()
+          ]);
+          setUnreadReplies(unread);
+          setReadReplies(read);
+        } catch (error) {
+          console.error('Failed to load replies:', error);
+        }
+      }
+    };
+
+    loadReplies();
+  }, [activeSidebarItem, getUnreadReplies, getReadReplies]);
+
+  // Load sent messages when drafts tab is active
+  useEffect(() => {
+    const loadSentMessages = async () => {
+      if (activeSidebarItem === 'drafts') {
+        console.log('Loading sent messages for drafts tab');
+        try {
+          const sent = await getSentMessages();
+          setSentMessages(sent);
+          console.log('Sent messages loaded:', sent.length);
+        } catch (error) {
+          console.error('Failed to load sent messages:', error);
+        }
+      }
+    };
+
+    loadSentMessages();
+  }, [activeSidebarItem, getSentMessages]);
+
+  // Search function for sent messages
+  const searchSent = (query: string) => {
+    if (!query.trim()) return sentMessages;
+    return sentMessages.filter(message => 
+      message.content?.toLowerCase().includes(query.toLowerCase()) ||
+      message.location_name?.toLowerCase().includes(query.toLowerCase())
+    );
+  };
+
+  // Function to handle marking a reply as read
+  const handleMarkReplyAsRead = async (messageId: string) => {
+    try {
+      await markMessageAsRead(messageId);
+      // Refresh replies to update the read/unread lists
+      const [unread, read] = await Promise.all([
+        getUnreadReplies(),
+        getReadReplies()
+      ]);
+      setUnreadReplies(unread);
+      setReadReplies(read);
+    } catch (error) {
+      console.error('Failed to mark reply as read:', error);
+    }
+  };
+
+  // Function to navigate to a message
+  const handleNavigateToMessage = async (message: any) => {
+    try {
+      console.log('=== NAVIGATION DEBUG ===');
+      console.log('Message object:', message);
+      console.log('Message type:', message.message_type);
+      console.log('Channel ID:', message.channel_id);
+      console.log('Conversation ID:', message.conversation_id);
+      console.log('Sender ID:', message.sender_id);
+      console.log('Available channels:', dbChannels);
+      console.log('Available direct messages:', availableDirectMessages);
+      console.log('Current state - selectedChannel:', selectedChannel?.id);
+      console.log('Current state - selectedDM:', selectedDM);
+      console.log('Current state - activeSidebarItem:', activeSidebarItem);
+      
+      if (message.message_type === 'direct' || message.conversation_id) {
+        console.log('Processing as DIRECT MESSAGE');
+        
+        if (message.conversation_id) {
+          console.log('Setting sidebar to dm and clearing channel selection...');
+          setActiveSidebarItem('dm');
+          setSelectedChannel(null);
+          
+          // For sent messages, we need to find the recipient, not the sender
+          const recipientId = message.recipient_id || message.sender_id;
+          const recipient = availableDirectMessages.find(dm => dm.id === recipientId);
+          console.log('Looking for recipient with ID:', recipientId);
+          console.log('Found recipient:', recipient);
+          
+          if (recipient) {
+            console.log('Setting selected DM to:', recipient.id);
+            setSelectedDM(recipient.id);
+            setCurrentConversationId(message.conversation_id);
+            console.log('Loading direct messages for conversation:', message.conversation_id);
+            await loadDirectMessages(message.conversation_id);
+          } else {
+            console.log('Recipient not found, loading conversation directly');
+            // If we can't find the recipient in available DMs, we still need to set a selectedDM
+            // Use the recipient_id or fallback to sender_id
+            setSelectedDM(recipientId);
+            setCurrentConversationId(message.conversation_id);
+            await loadDirectMessages(message.conversation_id);
+          }
+        }
+      } else if (message.message_type === 'channel' || message.channel_id) {
+        console.log('Processing as CHANNEL MESSAGE');
+        
+        if (message.channel_id) {
+          console.log('Setting sidebar to channel and clearing DM selection...');
+          setActiveSidebarItem('channel');
+          setSelectedDM(null);
+          
+          // Find the channel
+          const channel = dbChannels.find(c => c.id === message.channel_id);
+          console.log('Looking for channel with ID:', message.channel_id);
+          console.log('Found channel:', channel);
+          
+          if (channel) {
+            console.log('Setting selected channel to:', channel);
+            setSelectedChannel(channel);
+            console.log('Loading channel messages for channel:', message.channel_id);
+            await loadChannelMessages(message.channel_id);
+          } else {
+            console.log('Channel not found in available channels!');
+          }
+        }
+      } else {
+        console.log('Unknown message type or missing identifiers');
+      }
+      
+      // Mark as read when navigating
+      console.log('Marking message as read...');
+      await handleMarkReplyAsRead(message.id);
+      console.log('=== NAVIGATION COMPLETE ===');
+    } catch (error) {
+      console.error('Failed to navigate to message:', error);
+    }
+  };
+
+  // Get current messages based on selected view
+  const currentMessages = selectedChannel 
+    ? channelMessages[selectedChannel.id] || []
+    : (currentConversationId ? directMessages[currentConversationId] || [] : []);
+
+  console.log('currentMessages:', currentMessages);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -430,21 +651,294 @@ export const Chat: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [currentMessages]);
+
+  // TEMPORARILY DISABLED: Auto-mark channel messages as read when viewing
+  // useEffect(() => {
+  //   if (selectedChannel && activeSidebarItem === 'chat' && currentMessages.length > 0) {
+  //     // Mark channel messages as read when viewing them
+  //     markChannelMessagesAsRead(selectedChannel.id);
+  //   }
+  // }, [selectedChannel, activeSidebarItem, currentMessages.length, markChannelMessagesAsRead]);
+
+  // TEMPORARILY DISABLED: Auto-mark messages as read when viewing conversations
+  // This was causing navigation issues due to RLS policy errors
+  // Will re-enable after navigation is working properly
+  
+  // // Auto-mark direct messages as read when viewing a DM conversation
+  // useEffect(() => {
+  //   if (currentConversationId && !selectedChannel && activeSidebarItem === 'chat' && currentMessages.length > 0) {
+  //     console.log('Auto-marking direct messages as read for conversation:', currentConversationId);
+  //     // Mark direct messages as read when viewing them
+  //     markDirectMessagesAsRead(currentConversationId);
+  //   }
+  // }, [currentConversationId, selectedChannel, activeSidebarItem, currentMessages.length, markDirectMessagesAsRead]);
+
+  // // Auto-mark channel messages as read when viewing a channel
+  // useEffect(() => {
+  //   if (selectedChannel && !selectedDM && activeSidebarItem === 'chat' && currentMessages.length > 0) {
+  //     console.log('Auto-marking channel messages as read for channel:', selectedChannel.id);
+  //     // Mark channel messages as read when viewing them
+  //     markChannelMessagesAsRead(selectedChannel.id);
+  //   }
+  // }, [selectedChannel?.id, selectedDM, activeSidebarItem, currentMessages.length, markChannelMessagesAsRead]);
+
+  // Handle post reaction
+  const handleReaction = async (postId: string, reactionType: 'like' | 'love' | 'laugh' | 'sad' | 'angry') => {
+    const success = await togglePostReaction(postId, reactionType);
+    if (success) {
+      // Reload reactions for this post immediately
+      const reactions = await getPostReactions(postId);
+      setPostReactions(prev => ({
+        ...prev,
+        [postId]: reactions
+      }));
+
+      // Also refresh activity reactions if we're on that tab
+      if (activeSidebarItem === 'activity' && activityTab === 'reactions') {
+        loadActivityReactions();
+      }
+    }
+  };
+
+  // Handle adding comment
+  const handleAddComment = async (postId: string) => {
+    const content = commentInputs[postId];
+    if (!content?.trim()) return;
+
+    const comment = await addPostComment(postId, content.trim());
+    if (comment) {
+      // Clear input
+      setCommentInputs(prev => ({
+        ...prev,
+        [postId]: ''
+      }));
+      
+      // Reload comments for this post
+      const comments = await getPostComments(postId);
+      setPostComments(prev => ({
+        ...prev,
+        [postId]: comments
+      }));
+    }
+  };
+
+  // Toggle comments visibility
+  const toggleComments = async (postId: string) => {
+    setShowComments(prev => ({
+      ...prev,
+      [postId]: !prev[postId]
+    }));
+    
+    // Load comments if showing for the first time
+    if (!showComments[postId] && !postComments[postId]) {
+      const comments = await getPostComments(postId);
+      setPostComments(prev => ({
+        ...prev,
+        [postId]: comments
+      }));
+    }
+  };
+
+  // Load reactions and comments for posts when they change
+  useEffect(() => {
+    const loadPostData = async () => {
+      if (selectedChannel && channelPosts[selectedChannel.id]) {
+        const posts = channelPosts[selectedChannel.id];
+        
+        // Load reactions for all posts (always refresh to get latest reactions)
+        for (const post of posts) {
+          const reactions = await getPostReactions(post.id);
+          setPostReactions(prev => ({
+            ...prev,
+            [post.id]: reactions
+          }));
+        }
+      }
+    };
+    
+    loadPostData();
+  }, [selectedChannel, channelPosts]); // Removed getPostReactions to avoid dependency issues
+
+  // Load activity reactions for current user's posts
+  const loadActivityReactions = async () => {
+    if (!user) {
+      return;
+    }
 
 
+    try {
+      // First, get all posts by the current user
+      const { data: userPosts, error: postsError } = await supabase
+        .from('posts')
+        .select('id, title, content, created_at, channel_id')
+        .eq('author_id', user.id)
+        .eq('is_published', true)
+        .order('created_at', { ascending: false });
 
-  const handleSendMessage = () => {
-    if (messageInput.trim()) {
-      const newMessage: Message = {
-        id: Date.now().toString(),
-        userId: user?.id || 'current',
-        userName: 'You',
-        content: messageInput,
-        timestamp: new Date()
-      };
-      setMessages([...messages, newMessage]);
+      if (postsError) {
+        console.error('Error fetching user posts:', postsError);
+        return;
+      }
+
+      console.log('Found user posts:', userPosts?.length || 0);
+
+      if (!userPosts || userPosts.length === 0) {
+        setActivityReactions([]);
+        return;
+      }
+
+      const postIds = userPosts.map(post => post.id);
+
+      // Get all reactions on user's posts (excluding user's own reactions)
+      const { data: reactions, error: reactionsError } = await supabase
+        .from('post_reactions')
+        .select('id, post_id, user_id, reaction_type, created_at')
+        .in('post_id', postIds)
+        .neq('user_id', user.id) // Exclude current user's own reactions
+        .order('created_at', { ascending: false });
+
+      if (reactionsError) {
+        console.error('Error fetching activity reactions:', reactionsError);
+        return;
+      }
+
+
+      if (!reactions || reactions.length === 0) {
+        setActivityReactions([]);
+        return;
+      }
+
+      // Get user profiles for reaction authors
+      const userIds = [...new Set(reactions.map(r => r.user_id))];
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, avatar_url')
+        .in('id', userIds);
+
+      if (profilesError) {
+        console.error('Error fetching profiles for activity reactions:', profilesError);
+      }
+
+      // Get channel names
+      const channelIds = [...new Set(userPosts.map(p => p.channel_id).filter(Boolean))];
+      const { data: channels, error: channelsError } = await supabase
+        .from('channels')
+        .select('id, name')
+        .in('id', channelIds);
+
+      if (channelsError) {
+        console.error('Error fetching channels for activity reactions:', channelsError);
+      }
+
+      // Merge all data
+      const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+      const postMap = new Map(userPosts.map(p => [p.id, p]));
+      const channelMap = new Map((channels || []).map(c => [c.id, c]));
+
+      const enrichedReactions = reactions.map(reaction => {
+        const post = postMap.get(reaction.post_id);
+        const profile = profileMap.get(reaction.user_id);
+        const channel = post ? channelMap.get(post.channel_id) : null;
+
+        return {
+          ...reaction,
+          post,
+          profile,
+          channel
+        };
+      });
+
+      setActivityReactions(enrichedReactions);
+    } catch (err) {
+      console.error('Failed to load activity reactions:', err);
+    }
+  };
+
+  // Load activity reactions when activity tab is opened
+  useEffect(() => {
+    if (activeSidebarItem === 'activity' && activityTab === 'reactions') {
+      loadActivityReactions();
+    }
+  }, [activeSidebarItem, activityTab, user]);
+
+
+  // Real-time reaction updates using Supabase subscriptions
+  useEffect(() => {
+    if (!selectedChannel || !channelPosts[selectedChannel.id]) return;
+
+    const posts = channelPosts[selectedChannel.id];
+    const postIds = posts.map(post => post.id);
+
+    // Subscribe to real-time changes on post_reactions table
+    console.log('Setting up real-time subscription for posts:', postIds);
+    const reactionSubscription = supabase
+      .channel(`post-reactions-${selectedChannel.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'post_reactions',
+          filter: `post_id=in.(${postIds.join(',')})`
+        },
+        async (payload) => {
+          console.log('🔥 REAL-TIME REACTION CHANGE DETECTED:', payload);
+          
+          // Refresh reactions for the affected post
+          const postId = payload.new?.post_id || payload.old?.post_id;
+          if (postId) {
+            const reactions = await getPostReactions(postId);
+            setPostReactions(prev => ({
+              ...prev,
+              [postId]: reactions
+            }));
+            
+            // Also refresh activity reactions if on that tab
+            if (activeSidebarItem === 'activity' && activityTab === 'reactions') {
+              loadActivityReactions();
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Real-time subscription status:', status);
+      });
+
+    // More aggressive periodic refresh to ensure cross-user sync
+    const refreshInterval = setInterval(async () => {
+      for (const post of posts) {
+        const reactions = await getPostReactions(post.id);
+        setPostReactions(prev => ({
+          ...prev,
+          [post.id]: reactions
+        }));
+      }
+    }, 5000); // Refresh every 5 seconds for testing
+
+    return () => {
+      supabase.removeChannel(reactionSubscription);
+      clearInterval(refreshInterval);
+    };
+  }, [selectedChannel, channelPosts, activeSidebarItem, activityTab]);
+
+  const handleSendMessage = async () => {
+    if (!messageInput.trim()) return;
+
+    if (selectedChannel) {
+      // Send message to channel
+      await sendChannelMessage(selectedChannel.id, messageInput);
       setMessageInput('');
+    } else if (selectedDM) {
+      // Send direct message
+      const success = await sendDirectMessage(selectedDM, messageInput);
+      if (success) {
+        setMessageInput('');
+        // Reload messages to show the new message
+        if (currentConversationId) {
+          await loadDirectMessages(currentConversationId);
+        }
+      }
     }
   };
 
@@ -458,20 +952,28 @@ export const Chat: React.FC = () => {
     }
   };
 
-  const formatTime = (date: Date) => {
+  const formatTime = (date: Date | string) => {
     const now = new Date();
-    const diff = now.getTime() - date.getTime();
+    const messageDate = typeof date === 'string' ? new Date(date) : date;
+    
+    // Check if the date is valid
+    if (isNaN(messageDate.getTime())) {
+      return 'now';
+    }
+    
+    const diff = now.getTime() - messageDate.getTime();
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
 
     if (days > 0) return `${days}d ago`;
     if (hours > 0) return `${hours}h ago`;
+    if (minutes <= 0) return 'now';
     return `${minutes}m ago`;
   };
 
   return (
-    <div className="h-screen w-full flex bg-gray-50 -m-4 sm:-m-6">
+    <div className="h-screen w-full flex bg-gray-50 -mx-3 -my-4 sm:-mx-6 sm:-my-6 lg:-mx-8 lg:-my-8">
       {/* Left Sidebar */}
       <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col h-full">
         {/* Single Chat Header */}
@@ -524,7 +1026,7 @@ export const Chat: React.FC = () => {
                 </button>
               </div>
               
-              {channels.length === 0 ? (
+              {dbChannels.length === 0 ? (
                 <div className="text-center py-8">
                   <div className="text-sm text-gray-500 mb-2">No group channels yet</div>
                   <button 
@@ -536,7 +1038,7 @@ export const Chat: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {channels.map((channel) => (
+                  {dbChannels.map((channel) => (
                     <button
                       key={channel.id}
                       className={`w-full flex items-center px-2 py-1.5 text-sm rounded transition-colors ${
@@ -545,16 +1047,24 @@ export const Chat: React.FC = () => {
                           : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
                       }`}
                       onClick={() => {
-                        setSelectedChannel(channel);
+                        setSelectedChannel({
+                          id: channel.id,
+                          name: channel.name,
+                          type: channel.channel_type as 'text' | 'voice',
+                          description: channel.description || undefined,
+                          memberCount: channel.member_count || 1
+                        });
                         setSelectedDM(null);
                         setActiveSidebarItem('channel');
+                        // Load messages for this channel
+                        loadChannelMessages(channel.id);
                       }}
                     >
                       <Hash className="w-4 h-4 mr-2 flex-shrink-0" />
                       <span className="truncate flex-1 text-left">{channel.name}</span>
-                      {channel.locked && <Lock className="w-3 h-3 text-gray-400" />}
-                      {channel.memberCount && channel.memberCount > 0 && (
-                        <span className="text-xs text-gray-500">{channel.memberCount}</span>
+                      {(channel as any).locked && <Lock className="w-3 h-3 text-gray-400" />}
+                      {channel.member_count && channel.member_count > 0 && (
+                        <span className="text-xs text-gray-500">{channel.member_count}</span>
                       )}
                     </button>
                   ))}
@@ -566,8 +1076,8 @@ export const Chat: React.FC = () => {
             <div className="px-2 py-3 border-t border-gray-200">
               <div className="px-2 py-1 text-xs font-semibold text-gray-600 mb-1">DIRECT MESSAGES</div>
               <div className="space-y-0.5">
-                {directMessages.length > 0 ? (
-                  directMessages.map((dm) => (
+                {availableDirectMessages.length > 0 ? (
+                  availableDirectMessages.map((dm) => (
                     <button
                       key={dm.id}
                       className={`w-full flex items-center px-2 py-1.5 text-sm rounded transition-colors ${
@@ -692,37 +1202,20 @@ export const Chat: React.FC = () => {
                 <>
                   {/* Messages Area */}
                   <div className="flex-1 overflow-y-auto p-6">
-                    {messages.length > 0 ? (
+                    {selectedChannel && channelMessages[selectedChannel.id]?.length > 0 ? (
                       <div className="space-y-6">
-                        {messages.map((message) => (
+                        {channelMessages[selectedChannel.id].map((message) => (
                           <div key={message.id} className="flex items-start space-x-3">
                             <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
-                              {message.userName.charAt(0)}
+                              {message.sender_name.charAt(0)}
                             </div>
                             <div className="flex-1">
                               <div className="flex items-center space-x-2 mb-1">
-                                <span className="font-semibold text-gray-900">{message.userName}</span>
-                                <span className="text-xs text-gray-500">{formatTime(message.timestamp)}</span>
-                                {message.edited && <span className="text-xs text-gray-400">(edited)</span>}
+                                <span className="font-semibold text-gray-900">{message.sender_name}</span>
+                                <span className="text-xs text-gray-500">{formatTime(new Date(message.created_at))}</span>
+                                {message.is_edited && <span className="text-xs text-gray-400">(edited)</span>}
                               </div>
                               <div className="text-gray-800">{message.content}</div>
-                              {message.reactions && message.reactions.length > 0 && (
-                                <div className="flex items-center mt-2 space-x-2">
-                                  {message.reactions.map((reaction, idx) => (
-                                    <button
-                                      key={idx}
-                                      className={`px-2 py-1 rounded-full text-xs flex items-center space-x-1 border ${
-                                        reaction.reacted
-                                          ? 'bg-blue-50 border-blue-200 text-blue-700'
-                                          : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
-                                      }`}
-                                    >
-                                      <span>{reaction.emoji}</span>
-                                      <span>{reaction.count}</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           </div>
                         ))}
@@ -820,13 +1313,18 @@ export const Chat: React.FC = () => {
                           <input
                             type="text"
                             placeholder="Post topic"
+                            value={channelPostTitle}
+                            onChange={(e) => setChannelPostTitle(e.target.value)}
                             className="w-full px-4 pt-3 pb-1 text-gray-900 placeholder-gray-500 font-medium focus:outline-none"
                           />
                           <div className="px-4 pb-3">
-                            <div className="flex items-center text-sm text-gray-500">
-                              <AtSign className="w-4 h-4 mr-1" />
-                              <span>@@</span>
-                            </div>
+                            <textarea
+                              placeholder="What would you like to share?"
+                              value={channelPostContent}
+                              onChange={(e) => setChannelPostContent(e.target.value)}
+                              rows={3}
+                              className="w-full text-gray-900 placeholder-gray-500 focus:outline-none resize-none border-0"
+                            />
                           </div>
                           <div className="border-t border-gray-200 px-3 py-2 flex items-center justify-between">
                             <div className="flex items-center space-x-1">
@@ -860,7 +1358,27 @@ export const Chat: React.FC = () => {
                                 <Mic className="w-4 h-4" />
                               </button>
                             </div>
-                            <button className="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
+                            <button 
+                              className="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                              disabled={!channelPostContent.trim() || !selectedChannel}
+                              onClick={async () => {
+                                if (!channelPostContent.trim() || !selectedChannel) return;
+                                
+                                try {
+                                  await createChannelPost(
+                                    selectedChannel.id,
+                                    channelPostTitle,
+                                    channelPostContent,
+                                    'update',
+                                    []
+                                  );
+                                  setChannelPostTitle('');
+                                  setChannelPostContent('');
+                                } catch (error) {
+                                  console.error('Failed to create channel post:', error);
+                                }
+                              }}
+                            >
                               Post
                             </button>
                           </div>
@@ -891,15 +1409,203 @@ export const Chat: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* No Posts Yet */}
-                  <div className="flex-1 flex items-center justify-center p-12">
-                    <div className="text-center">
-                      <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <MessageSquare className="w-12 h-12 text-gray-400" />
+                  {/* Channel Posts List */}
+                  <div className="flex-1 p-6">
+                    {selectedChannel && channelPosts[selectedChannel.id]?.length > 0 ? (
+                      channelPosts[selectedChannel.id].map((post: any) => (
+                        <div key={post.id} className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
+                          <div className="flex items-start space-x-3">
+                            <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                              {(post.author_name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <span className="font-semibold text-gray-900">{post.author_name || 'Unknown'}</span>
+                                <span className="text-sm text-gray-500">
+                                  {formatTime(post.created_at)}
+                                </span>
+                                <span className={`px-2 py-1 text-xs font-medium rounded flex items-center ${
+                                  post.post_type === 'update' ? 'bg-blue-100 text-blue-700' :
+                                  post.post_type === 'announcement' ? 'bg-red-100 text-red-700' :
+                                  post.post_type === 'idea' ? 'bg-yellow-100 text-yellow-700' :
+                                  post.post_type === 'discussion' ? 'bg-green-100 text-green-700' :
+                                  'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {post.post_type === 'update' && <span className="mr-1">🔔</span>}
+                                  {post.post_type || 'Update'}
+                                </span>
+                                {post.is_pinned && (
+                                  <span className="px-2 py-1 bg-orange-100 text-orange-700 text-xs font-medium rounded">
+                                    Pinned
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {post.title && (
+                                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                  {post.title}
+                                </h3>
+                              )}
+                              
+                              <div className="text-gray-800 space-y-2">
+                                <p>{post.content}</p>
+                              </div>
+
+                              {post.tags && post.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                  {post.tags.map((tag: string, index: number) => (
+                                    <span key={index} className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              
+                              {/* Post Actions */}
+                              <div className="mt-4 pt-3 border-t border-gray-100">
+                                {/* Reactions */}
+                                <div className="flex items-center space-x-1 mb-3">
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'like')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Like"
+                                  >
+                                    <ThumbsUp className="w-4 h-4 text-gray-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'love')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Love"
+                                  >
+                                    <Heart className="w-4 h-4 text-red-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'laugh')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Laugh"
+                                  >
+                                    <Laugh className="w-4 h-4 text-yellow-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'sad')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Sad"
+                                  >
+                                    <Frown className="w-4 h-4 text-blue-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'angry')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Angry"
+                                  >
+                                    <Angry className="w-4 h-4 text-red-600" />
+                                  </button>
+                                  <button 
+                                    onClick={() => toggleComments(post.id)}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors ml-4"
+                                  >
+                                    <MessageSquare className="w-4 h-4 mr-1" />
+                                    <span className="text-sm">Comment</span>
+                                  </button>
+                                  <span className="text-sm text-gray-500 ml-4">
+                                    {post.view_count || 0} views
+                                  </span>
+                                </div>
+
+                                {/* Reaction Summary */}
+                                {postReactions[post.id] && Array.isArray(postReactions[post.id]) && postReactions[post.id].length > 0 && (
+                                  <div className="flex items-center space-x-2 mb-3 text-sm text-gray-600">
+                                    {['like', 'love', 'laugh', 'sad', 'angry'].map(reactionType => {
+                                      const count = postReactions[post.id].filter((r: any) => (r.reaction_type || r.type) === reactionType).length;
+                                      if (count === 0) return null;
+                                      
+                                      const icons = {
+                                        like: <span>👍</span>,
+                                        love: <span>❤️</span>, 
+                                        laugh: <span>😂</span>,
+                                        sad: <span>😢</span>,
+                                        angry: <span>😡</span>
+                                      };
+                                      
+                                      return (
+                                        <span key={reactionType} className="flex items-center space-x-1 bg-gray-200 px-2 py-1 rounded">
+                                          {icons[reactionType as keyof typeof icons]}
+                                          <span className="font-bold">{count}</span>
+                                          <span className="text-xs">({reactionType})</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+
+                                {/* Comment Input */}
+                                {showComments[post.id] && (
+                                  <div className="mt-3">
+                                    <div className="flex space-x-3">
+                                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                        {user?.email?.charAt(0).toUpperCase() || 'U'}
+                                      </div>
+                                      <div className="flex-1">
+                                        <input
+                                          type="text"
+                                          placeholder="Add a comment..."
+                                          value={commentInputs[post.id] || ''}
+                                          onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                          onKeyPress={(e) => e.key === 'Enter' && handleAddComment(post.id)}
+                                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                      </div>
+                                      <button
+                                        onClick={() => handleAddComment(post.id)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                      >
+                                        Post
+                                      </button>
+                                    </div>
+
+                                    {/* Comments List */}
+                                    {postComments[post.id] && postComments[post.id].length > 0 && (
+                                      <div className="mt-4 space-y-3">
+                                        {postComments[post.id].map((comment: any) => (
+                                          <div key={comment.id} className="flex space-x-3">
+                                            <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                              {(comment.profiles?.full_name || comment.profiles?.email || 'U').charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="flex-1">
+                                              <div className="bg-gray-100 rounded-lg px-3 py-2">
+                                                <div className="font-semibold text-sm text-gray-900">
+                                                  {comment.profiles?.full_name || comment.profiles?.email || 'Unknown'}
+                                                </div>
+                                                <p className="text-gray-800 text-sm">{comment.content}</p>
+                                              </div>
+                                              <div className="text-xs text-gray-500 mt-1">
+                                                {formatTime(comment.created_at)}
+                                                {comment.is_edited && <span className="ml-2">(edited)</span>}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center justify-center p-12">
+                        <div className="text-center">
+                          <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <MessageSquare className="w-12 h-12 text-gray-400" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-2">No posts yet</h3>
+                          <p className="text-gray-600">Be the first to post in this channel</p>
+                        </div>
                       </div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No posts yet</h3>
-                      <p className="text-gray-600">Be the first to post in this channel</p>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -911,13 +1617,13 @@ export const Chat: React.FC = () => {
                   <div className="flex items-center space-x-3">
                     <div className="relative">
                       <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
-                        {directMessages.find(dm => dm.id === selectedDM)?.name.charAt(0).toUpperCase()}
+                        {availableDirectMessages.find(dm => dm.id === selectedDM)?.name.charAt(0).toUpperCase()}
                       </div>
                       <div className={onlineUsers.has(selectedDM) ? 'absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white' : 'absolute bottom-0 right-0 w-3 h-3 bg-gray-400 rounded-full border-2 border-white'}></div>
                     </div>
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900">
-                        {directMessages.find(dm => dm.id === selectedDM)?.name}
+                        {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
                       </h2>
                       <p className="text-sm text-gray-500">
                         {onlineUsers.has(selectedDM) ? 'Active now' : 'Offline'}
@@ -938,18 +1644,18 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-6">
-                {messages.length > 0 ? (
+                {currentMessages.length > 0 ? (
                   <div className="space-y-6">
-                    {messages.map((message) => (
+                    {currentMessages.map((message) => (
                       <div key={message.id} className="flex items-start space-x-3">
                         <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
-                          {message.userName.charAt(0)}
+                          {(message.sender_name || message.userName || 'U').charAt(0)}
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center space-x-2 mb-1">
-                            <span className="font-semibold text-gray-900">{message.userName}</span>
-                            <span className="text-xs text-gray-500">{formatTime(message.timestamp)}</span>
-                            {message.edited && <span className="text-xs text-gray-400">(edited)</span>}
+                            <span className="font-semibold text-gray-900">{message.sender_name || message.userName}</span>
+                            <span className="text-xs text-gray-500">{formatTime(message.created_at || message.timestamp)}</span>
+                            {(message.is_edited || message.edited) && <span className="text-xs text-gray-400">(edited)</span>}
                           </div>
                           <div className="text-gray-800">{message.content}</div>
                         </div>
@@ -966,7 +1672,7 @@ export const Chat: React.FC = () => {
                       Start a conversation
                     </h3>
                     <p className="text-gray-600 max-w-md">
-                      Send a message to {directMessages.find(dm => dm.id === selectedDM)?.name}
+                      Send a message to {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
                     </p>
                   </div>
                 )}
@@ -981,7 +1687,7 @@ export const Chat: React.FC = () => {
                       value={messageInput}
                       onChange={(e) => setMessageInput(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                      placeholder={`Message ${directMessages.find(dm => dm.id === selectedDM)?.name}`}
+                      placeholder={`Message ${availableDirectMessages.find(dm => dm.id === selectedDM)?.name}`}
                       className="flex-1 text-gray-900 placeholder-gray-500 focus:outline-none"
                     />
                   </div>
@@ -1033,54 +1739,86 @@ export const Chat: React.FC = () => {
             /* Posts Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Posts Header */}
-              <div className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
+              <div className="px-4 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-gray-900">Posts</h2>
-                <button 
-                  onClick={() => setShowNewPostModal(true)}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  New Post
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      if (selectedChannel) {
+                        console.log('Manual refresh posts for:', selectedChannel.id);
+                        loadChannelPosts(selectedChannel.id);
+                      }
+                    }}
+                    className="px-3 py-2 bg-gray-500 text-white text-sm font-medium rounded-lg hover:bg-gray-600 transition-colors"
+                  >
+                    Refresh
+                  </button>
+                  <button 
+                    onClick={() => setShowNewPostModal(true)}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    New Post
+                  </button>
+                </div>
               </div>
 
               {/* Posts Content */}
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto max-h-[75vh]">
                 {/* Create Post Section */}
-                <div className="p-6 border-b border-gray-200 bg-gray-50">
+                <div className="p-4 border-b border-gray-200 bg-gray-50">
                   <div className="flex items-start space-x-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      {user?.email?.charAt(0).toUpperCase() || 'V'}
+                    <div className="w-10 h-10 rounded-full overflow-hidden">
+                      <img 
+                        src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756368405/magicteams_k6b5jh.png" 
+                        alt="Magic Teams" 
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1">
                       {/* Channel Selector */}
                       <div className="mb-3">
                         <div className="relative">
-                          <button className="flex items-center justify-between w-48 px-3 py-2 text-left bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-                            <span className="text-gray-700">{selectedPostChannel}</span>
-                            <ChevronDown className="w-4 h-4 text-gray-500" />
-                          </button>
+                          <select 
+                            className="flex items-center justify-between w-48 px-3 py-2 text-left bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={selectedChannel?.id || ''}
+                            onChange={(e) => {
+                              const channelId = e.target.value;
+                              const channel = dbChannels.find(ch => ch.id === channelId);
+                              if (channel) {
+                                setSelectedChannel(channel as any);
+                                setSelectedPostChannel(channel.name);
+                              }
+                            }}
+                          >
+                            <option value="">Select Channel</option>
+                            {dbChannels.map(channel => (
+                              <option key={channel.id} value={channel.id}>
+                                #{channel.name}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </div>
 
                       {/* Post Input */}
-                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <div className="bg-white border border-gray-200 rounded-lg p-2">
                         <input
                           type="text"
                           placeholder="Post topic"
                           value={postTitle}
                           onChange={(e) => setPostTitle(e.target.value)}
-                          className="w-full text-lg font-medium placeholder-gray-500 border-0 focus:outline-none mb-2"
+                          className="w-full text-base font-medium placeholder-gray-500 border-0 focus:outline-none mb-1"
                         />
                         <textarea
                           placeholder="Write an update..."
                           value={postContent}
                           onChange={(e) => setPostContent(e.target.value)}
-                          rows={3}
+                          rows={2}
                           className="w-full placeholder-gray-500 border-0 focus:outline-none resize-none"
                         />
                         
                         {/* Post Actions */}
-                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
                           <div className="flex items-center space-x-2">
                             <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
                               <Plus className="w-4 h-4" />
@@ -1099,10 +1837,24 @@ export const Chat: React.FC = () => {
                           </div>
                           <button 
                             className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
-                            onClick={() => {
-                              setPostTitle('');
-                              setPostContent('');
+                            onClick={async () => {
+                              if (!postContent.trim() || !selectedChannel) return;
+                              
+                              try {
+                                await createChannelPost(
+                                  selectedChannel.id,
+                                  postTitle,
+                                  postContent,
+                                  'update',
+                                  []
+                                );
+                                setPostTitle('');
+                                setPostContent('');
+                              } catch (error) {
+                                console.error('Failed to create post:', error);
+                              }
                             }}
+                            disabled={!postContent.trim() || !selectedChannel}
                           >
                             Post
                           </button>
@@ -1113,7 +1865,7 @@ export const Chat: React.FC = () => {
                 </div>
 
                 {/* Filter Bar */}
-                <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <div className="px-4 py-4 border-b border-gray-200 bg-white">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
                       <button className="px-3 py-1.5 bg-blue-100 text-blue-700 text-sm font-medium rounded-full flex items-center">
@@ -1142,114 +1894,337 @@ export const Chat: React.FC = () => {
 
                 {/* Posts List */}
                 <div className="p-6">
-                  {/* Date Header */}
-                  <div className="text-sm font-medium text-gray-500 mb-4">Jun 13</div>
+                  {selectedChannel ? (
+                    channelPosts[selectedChannel.id]?.length > 0 ? (
+                      channelPosts[selectedChannel.id].map((post: any) => (
+                        <div key={post.id} className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
+                          <div className="flex items-start space-x-3">
+                            <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                              {(post.author_name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <span className="font-semibold text-gray-900">{post.author_name || 'Unknown'}</span>
+                                <span className="text-sm text-gray-500">
+                                  in #{selectedChannel.name} • {formatTime(post.created_at)} •
+                                </span>
+                                <span className={`px-2 py-1 text-xs font-medium rounded flex items-center ${
+                                  post.post_type === 'update' ? 'bg-blue-100 text-blue-700' :
+                                  post.post_type === 'announcement' ? 'bg-red-100 text-red-700' :
+                                  post.post_type === 'idea' ? 'bg-yellow-100 text-yellow-700' :
+                                  post.post_type === 'discussion' ? 'bg-green-100 text-green-700' :
+                                  'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {post.post_type === 'update' && <span className="mr-1">🔔</span>}
+                                  {post.post_type || 'Update'}
+                                </span>
+                                {post.is_pinned && (
+                                  <span className="px-2 py-1 bg-orange-100 text-orange-700 text-xs font-medium rounded">
+                                    Pinned
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {post.title && (
+                                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                  {post.title}
+                                </h3>
+                              )}
+                              
+                              <div className="text-gray-800 space-y-2">
+                                <p>{post.content}</p>
+                              </div>
 
-                  {/* Sample Post */}
-                  <div className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                        SP
+                              {post.tags && post.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                  {post.tags.map((tag: string, index: number) => (
+                                    <span key={index} className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              
+                              {/* Post Actions */}
+                              <div className="mt-4 pt-3 border-t border-gray-100">
+                                {/* Reactions */}
+                                <div className="flex items-center space-x-1 mb-3">
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'like')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Like"
+                                  >
+                                    <ThumbsUp className="w-4 h-4 text-gray-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'love')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Love"
+                                  >
+                                    <Heart className="w-4 h-4 text-red-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'laugh')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Laugh"
+                                  >
+                                    <Laugh className="w-4 h-4 text-yellow-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'sad')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Sad"
+                                  >
+                                    <Frown className="w-4 h-4 text-blue-500" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleReaction(post.id, 'angry')}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Angry"
+                                  >
+                                    <Angry className="w-4 h-4 text-red-600" />
+                                  </button>
+                                  <button 
+                                    onClick={() => toggleComments(post.id)}
+                                    className="flex items-center px-2 py-1 rounded-full hover:bg-gray-100 transition-colors ml-4"
+                                  >
+                                    <MessageSquare className="w-4 h-4 mr-1" />
+                                    <span className="text-sm">Comment</span>
+                                  </button>
+                                  <span className="text-sm text-gray-500 ml-4">
+                                    {post.view_count || 0} views
+                                  </span>
+                                </div>
+
+                                {/* Reaction Summary */}
+                                {postReactions[post.id] && Array.isArray(postReactions[post.id]) && postReactions[post.id].length > 0 && (
+                                  <div className="flex items-center space-x-2 mb-3 text-sm text-gray-600">
+                                    {['like', 'love', 'laugh', 'sad', 'angry'].map(reactionType => {
+                                      const count = postReactions[post.id].filter((r: any) => (r.reaction_type || r.type) === reactionType).length;
+                                      if (count === 0) return null;
+                                      
+                                      const icons = {
+                                        like: <span>👍</span>,
+                                        love: <span>❤️</span>, 
+                                        laugh: <span>😂</span>,
+                                        sad: <span>😢</span>,
+                                        angry: <span>😡</span>
+                                      };
+                                      
+                                      return (
+                                        <span key={reactionType} className="flex items-center space-x-1 bg-gray-200 px-2 py-1 rounded">
+                                          {icons[reactionType as keyof typeof icons]}
+                                          <span className="font-bold">{count}</span>
+                                          <span className="text-xs">({reactionType})</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+
+                                {/* Comment Input */}
+                                {showComments[post.id] && (
+                                  <div className="mt-3">
+                                    <div className="flex space-x-3">
+                                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                        {user?.email?.charAt(0).toUpperCase() || 'U'}
+                                      </div>
+                                      <div className="flex-1">
+                                        <input
+                                          type="text"
+                                          placeholder="Add a comment..."
+                                          value={commentInputs[post.id] || ''}
+                                          onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                          onKeyPress={(e) => e.key === 'Enter' && handleAddComment(post.id)}
+                                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                      </div>
+                                      <button
+                                        onClick={() => handleAddComment(post.id)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                      >
+                                        Post
+                                      </button>
+                                    </div>
+
+                                    {/* Comments List */}
+                                    {postComments[post.id] && postComments[post.id].length > 0 && (
+                                      <div className="mt-4 space-y-3">
+                                        {postComments[post.id].map((comment: any) => (
+                                          <div key={comment.id} className="flex space-x-3">
+                                            <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                              {(comment.profiles?.full_name || comment.profiles?.email || 'U').charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="flex-1">
+                                              <div className="bg-gray-100 rounded-lg px-3 py-2">
+                                                <div className="font-semibold text-sm text-gray-900">
+                                                  {comment.profiles?.full_name || comment.profiles?.email || 'Unknown'}
+                                                </div>
+                                                <p className="text-gray-800 text-sm">{comment.content}</p>
+                                              </div>
+                                              <div className="text-xs text-gray-500 mt-1">
+                                                {formatTime(comment.created_at)}
+                                                {comment.is_edited && <span className="ml-2">(edited)</span>}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <FileText className="w-8 h-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No posts yet</h3>
+                        <p className="text-gray-500 mb-6">
+                          Be the first to share an update in #{selectedChannel.name}
+                        </p>
                       </div>
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <span className="font-semibold text-gray-900">satya Phanindra</span>
-                          <span className="text-sm text-gray-500">in Product building every ai • Jun 13 •</span>
-                          <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded flex items-center">
-                            <span className="mr-1">🔔</span>
-                            Update
-                          </span>
-                        </div>
-                        
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                          tasks of phanindra june 13
-                        </h3>
-                        
-                        <div className="text-gray-800 space-y-2">
-                          <p>guys , my tasks today</p>
-                          <ul className="list-disc list-inside space-y-1 ml-4">
-                            <li>linkedin messages</li>
-                            <li>youtube video demos of magicteams</li>
-                            <li>20 people outreach</li>
-                          </ul>
-                          <p>will update by afternoon,</p>
-                        </div>
-                        
-                        {/* Post Actions */}
-                        <div className="flex items-center space-x-4 mt-4 pt-3 border-t border-gray-100">
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <span className="mr-1">👍</span>
-                          </button>
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <Reply className="w-4 h-4" />
-                          </button>
-                        </div>
+                    )
+                  ) : (
+                    <div className="text-center py-12">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Hash className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">Select a channel</h3>
+                      <p className="text-gray-500">
+                        Choose a channel to view and create posts
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* New Post Modal */}
+              {showNewPostModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-hidden">
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                      <div className="flex items-center space-x-3">
+                        <button className="flex items-center justify-between w-48 px-3 py-2 text-left bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-50">
+                          <span className="text-gray-700">Select Channel</span>
+                          <ChevronDown className="w-4 h-4 text-gray-500" />
+                        </button>
+                      </div>
+                      <button 
+                        onClick={() => setShowNewPostModal(false)}
+                        className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Modal Content */}
+                    <div className="p-6">
+                      {/* Post Input */}
+                      <div className="space-y-4">
+                        <input
+                          type="text"
+                          placeholder="Post topic"
+                          value={postTitle}
+                          onChange={(e) => setPostTitle(e.target.value)}
+                          className="w-full text-lg font-medium placeholder-gray-500 border-0 focus:outline-none bg-transparent"
+                        />
+                        <textarea
+                          placeholder="Write an update..."
+                          value={postContent}
+                          onChange={(e) => setPostContent(e.target.value)}
+                          rows={8}
+                          className="w-full placeholder-gray-500 border-0 focus:outline-none resize-none bg-transparent"
+                        />
                       </div>
                     </div>
-                  </div>
 
-                  {/* Another Sample Post */}
-                  <div className="bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                        JD
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <span className="font-semibold text-gray-900">John Developer</span>
-                          <span className="text-sm text-gray-500">in demo implementations • Jun 12 •</span>
-                          <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded">
-                            Discussion
-                          </span>
-                        </div>
-                        
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                          Architecture decisions for Q3
-                        </h3>
-                        
-                        <div className="text-gray-800">
-                          <p>Team, I wanted to get everyone's input on the technical architecture we'll be using for the upcoming quarter. We have a few options to consider...</p>
-                        </div>
-                        
-                        {/* Post Actions */}
-                        <div className="flex items-center space-x-4 mt-4 pt-3 border-t border-gray-100">
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <span className="mr-1">👍</span>
-                            <span className="text-sm">2</span>
+                    {/* Modal Footer */}
+                    <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Plus className="w-4 h-4" />
                           </button>
-                          <button className="flex items-center text-gray-500 hover:text-gray-700">
-                            <Reply className="w-4 h-4 mr-1" />
-                            <span className="text-sm">3</span>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Paperclip className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <AtSign className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Hash className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Smile className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Camera className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Mic className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <FileText className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <button className="px-3 py-1.5 text-gray-700 bg-gray-200 hover:bg-gray-300 rounded flex items-center">
+                            <span className="mr-1">🔔</span>
+                            Update
+                            <ChevronDown className="w-3 h-3 ml-1" />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              // Handle post submission
+                              setPostTitle('');
+                              setPostContent('');
+                              setShowNewPostModal(false);
+                            }}
+                            className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            Post
                           </button>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : activeSidebarItem === 'replies' ? (
             /* Replies Content */
-            <div className="flex-1 flex flex-col">
-              {/* Unread/Read Toggle - Only for Replies */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white">
-                <div className="flex bg-gray-100 rounded-lg p-1">
+            <div className="flex-1 flex flex-col bg-white">
+              {/* Replies Header */}
+              <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">Replies</h2>
+                </div>
+                
+                {/* Unread/Read Tabs - Discord Style */}
+                <div className="flex space-x-6">
                   <button
                     onClick={() => setRepliesTab('unread')}
-                    className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
                       repliesTab === 'unread'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'text-gray-900 border-blue-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
                     }`}
                   >
                     Unread
                   </button>
                   <button
                     onClick={() => setRepliesTab('read')}
-                    className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
                       repliesTab === 'read'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                        ? 'text-gray-900 border-blue-600'
+                        : 'text-gray-500 border-transparent hover:text-gray-700'
                     }`}
                   >
                     Read
@@ -1257,183 +2232,110 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
 
-              {/* Replies Content Based on Tab */}
-              {repliesTab === 'unread' ? (
-                /* Empty State for Unread */
-                <div className="flex-1 flex flex-col items-center justify-center p-6">
-              <div className="w-32 h-32 mb-6 relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-24 h-20 bg-gray-200 rounded-lg relative">
-                    <div className="absolute -top-2 -right-2 w-12 h-10 bg-gray-300 rounded-lg"></div>
-                    <div className="absolute -bottom-2 -left-2 w-12 h-10 bg-gray-300 rounded-lg"></div>
-                  </div>
-                  <div className="absolute bottom-4 right-4 w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-                    <span className="text-lg">✓</span>
-                  </div>
-                </div>
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
-              <p className="text-gray-600 text-center mb-6">
-                Looks like you don't have any unread replies
-              </p>
-              <button className="px-6 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium">
-                Read old replies
-              </button>
-            </div>
-          ) : (
-            /* Read Tab Content */
-            <div className="flex-1 flex flex-col">
-              {/* Channel Header */}
-              <div className="px-4 py-3 border-b border-gray-200 bg-white flex items-center justify-between">
-                <div className="flex items-center">
-                  <Hash className="w-4 h-4 text-gray-500 mr-2" />
-                  <span className="font-medium text-gray-900">demo implementations</span>
-                  <span className="ml-2 text-sm text-gray-500">• 2 followers</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
-                    <Bell className="w-4 h-4" />
-                  </button>
-                  <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
-                    <Search className="w-4 h-4" />
-                  </button>
-                  <button className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
-                    Mark unread
-                  </button>
-                </div>
-              </div>
-
-              {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {/* Show more button */}
-                <div className="flex justify-center">
-                  <button className="px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors">
-                    Show 12 more
-                  </button>
-                </div>
-
-                {/* Sample Messages */}
-                <div className="space-y-6">
-                  {/* Message with avatar */}
-                  <div className="flex items-start space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      J
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span className="font-semibold text-gray-900">John Developer</span>
-                        <span className="text-xs text-gray-500">Today at 2:15 PM</span>
-                      </div>
-                      <div className="text-gray-800">
-                        Here's the latest update on the implementation. I've been working on the core features and the architecture is coming together nicely.
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Message with image */}
-                  <div className="flex items-start space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      S
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className="font-semibold text-gray-900">Sarah Designer</span>
-                        <span className="text-xs text-gray-500">Today at 1:45 PM</span>
-                      </div>
-                      <div className="text-gray-800 mb-3">
-                        I've created some mockups for the new interface. Let me know what you think about the design direction.
-                      </div>
-                      {/* Sample Image */}
-                      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden max-w-md">
-                        <div className="aspect-video bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center">
-                          <div className="text-center">
-                            <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mb-2 mx-auto shadow-sm">
-                              <Image className="w-8 h-8 text-gray-400" />
+              {/* Content Area */}
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+                {repliesTab === 'unread' ? (
+                  /* Unread Replies List */
+                  <div className="p-4">
+                    {unreadReplies.length > 0 ? (
+                      <div className="space-y-4">
+                        {unreadReplies.map((reply: any) => (
+                          <div key={reply.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer"
+                               onClick={() => handleNavigateToMessage(reply)}>
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                {reply.sender_name?.charAt(0) || 'U'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-sm font-medium text-gray-900">
+                                    {reply.sender_name || 'Unknown User'}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {new Date(reply.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                                <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                  {reply.content}
+                                </p>
+                                <div className="flex items-center text-xs text-gray-500">
+                                  <span className="bg-gray-100 px-2 py-1 rounded">
+                                    {reply.message_type === 'channel' ? `#${reply.location_name}` : reply.location_name}
+                                  </span>
+                                  <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                    Unread
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-sm text-gray-600">Design Mockup</div>
-                            <div className="text-xs text-gray-400 mt-1">Click to view full image</div>
                           </div>
+                        ))}
+                      </div>
+                    ) : (
+                      /* Empty State */
+                      <div className="flex-1 flex flex-col items-center justify-center p-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Reply className="w-8 h-8 text-gray-400" />
                         </div>
+                        <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
+                        <p className="text-gray-600 text-center mb-6">
+                          Looks like you don't have any unread replies
+                        </p>
                       </div>
-                    </div>
+                    )}
                   </div>
-
-                  {/* Another message */}
-                  <div className="flex items-start space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-orange-400 to-red-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                      M
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span className="font-semibold text-gray-900">Mike PM</span>
-                        <span className="text-xs text-gray-500">Yesterday at 4:30 PM</span>
+                ) : (
+                  /* Read Replies List */
+                  <div className="p-4">
+                    {readReplies.length > 0 ? (
+                      <div className="space-y-4">
+                        {readReplies.map((reply: any) => (
+                          <div key={reply.id} className="bg-white border border-gray-200 rounded-lg p-4 opacity-75 hover:bg-gray-50 cursor-pointer"
+                               onClick={() => handleNavigateToMessage(reply)}>
+                            <div className="flex items-start space-x-3">
+                              <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                {reply.sender_name?.charAt(0) || 'U'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-sm font-medium text-gray-700">
+                                    {reply.sender_name || 'Unknown User'}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {new Date(reply.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                                <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                  {reply.content}
+                                </p>
+                                <div className="flex items-center text-xs text-gray-500">
+                                  <span className="bg-gray-100 px-2 py-1 rounded">
+                                    {reply.message_type === 'channel' ? `#${reply.location_name}` : reply.location_name}
+                                  </span>
+                                  <span className="ml-2 bg-gray-200 text-gray-600 px-2 py-1 rounded">
+                                    Read
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div className="text-gray-800">
-                        Great progress everyone! The demo implementations are looking really solid. We should be ready for the client presentation next week.
+                    ) : (
+                      /* Empty State */
+                      <div className="flex-1 flex flex-col items-center justify-center p-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Reply className="w-8 h-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">No read replies</h3>
+                        <p className="text-gray-600 text-center max-w-sm">
+                          Previously read replies will appear here.
+                        </p>
                       </div>
-                      {/* Reaction */}
-                      <div className="flex items-center mt-2 space-x-2">
-                        <button className="px-2 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-full text-xs flex items-center space-x-1 hover:bg-blue-100">
-                          <span>👍</span>
-                          <span>3</span>
-                        </button>
-                        <button className="px-2 py-1 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs flex items-center space-x-1 hover:bg-green-100">
-                          <span>🎉</span>
-                          <span>2</span>
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                </div>
+                )}
               </div>
-
-              {/* Upgrade Banner */}
-              <div className="border-t border-gray-200 bg-blue-50">
-                <div className="px-4 py-3 flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center mr-3">
-                      <MessageSquare className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">Need to see older messages?</div>
-                      <div className="text-xs text-gray-600">Upgrade to access your full Chat history.</div>
-                    </div>
-                  </div>
-                  <button className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
-                    Learn more
-                  </button>
-                </div>
-              </div>
-
-              {/* Message Input */}
-              <div className="border-t border-gray-200 bg-white p-4">
-                <div className="flex items-end space-x-3">
-                  <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
-                    <Plus className="w-4 h-4" />
-                  </button>
-                  <div className="flex-1 relative">
-                    <input
-                      type="text"
-                      placeholder="Reply, press 'space' for AI, '/' for commands"
-                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    />
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center space-x-1">
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Paperclip className="w-3 h-3" />
-                      </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Smile className="w-3 h-3" />
-                      </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Send className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-              )
-            }
             </div>
           ) : activeSidebarItem === 'followups' ? (
             /* FollowUps Page Content */
@@ -1500,15 +2402,146 @@ export const Chat: React.FC = () => {
             </div>
           ) : activeSidebarItem === 'activity' ? (
             /* Activity Page Content */
-            <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gray-50">
-              <div className="text-center">
-                <div className="w-24 h-24 mx-auto mb-4 bg-gray-200 rounded-full flex items-center justify-center">
-                  <Activity className="w-8 h-8 text-gray-400" />
+            <div className="flex-1 flex flex-col bg-white">
+              {/* Activity Header */}
+              <div className="px-6 py-4 border-b border-gray-200 bg-white">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Activity</h2>
+                
+                {/* Filter Tabs */}
+                <div className="flex space-x-1">
+                  <button
+                    onClick={() => setActivityTab('mentions')}
+                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                      activityTab === 'mentions'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <AtSign className="w-4 h-4" />
+                    <span>Mentions</span>
+                  </button>
+                  <button
+                    onClick={() => setActivityTab('reactions')}
+                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                      activityTab === 'reactions'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <span>😊</span>
+                    <span>Reactions</span>
+                  </button>
+                  <button
+                    onClick={() => setActivityTab('assigned')}
+                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                      activityTab === 'assigned'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>Assigned to me</span>
+                  </button>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Activity</h3>
-                <p className="text-gray-600">
-                  Activity tracking is coming soon. Stay tuned for updates!
-                </p>
+              </div>
+
+              {/* Content Area */}
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+                {activityTab === 'mentions' ? (
+                  /* Mentions Content */
+                  <div className="flex-1 flex items-center justify-center p-12">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <AtSign className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No mentions yet</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        When someone mentions you, it will appear here.
+                      </p>
+                    </div>
+                  </div>
+                ) : activityTab === 'reactions' ? (
+                  /* Reactions Content */
+                  <div className="flex-1">
+                    {activityReactions.length > 0 ? (
+                      <div className="p-6 space-y-4">
+                        {activityReactions.map((reaction) => {
+                          const getReactionIcon = (type: string) => {
+                            switch (type) {
+                              case 'like': return <ThumbsUp className="w-4 h-4 text-gray-600" />;
+                              case 'love': return <Heart className="w-4 h-4 text-red-500" />;
+                              case 'laugh': return <Laugh className="w-4 h-4 text-yellow-500" />;
+                              case 'sad': return <Frown className="w-4 h-4 text-blue-500" />;
+                              case 'angry': return <Angry className="w-4 h-4 text-red-600" />;
+                              default: return <span>👍</span>;
+                            }
+                          };
+
+                          return (
+                            <div key={reaction.id} className="flex items-start space-x-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                              <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                                {(reaction.profile?.full_name || reaction.profile?.email || 'U').charAt(0).toUpperCase()}
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2 mb-1">
+                                  <span className="font-semibold text-gray-900">
+                                    {reaction.profile?.full_name || reaction.profile?.email || 'Unknown'}
+                                  </span>
+                                  <span className="text-gray-500">reacted with</span>
+                                  <span className="flex items-center space-x-1">
+                                    {getReactionIcon(reaction.reaction_type)}
+                                    <span className="text-sm font-medium">
+                                      {reaction.reaction_type}
+                                    </span>
+                                  </span>
+                                  <span className="text-gray-500">to your post</span>
+                                </div>
+                                <div className="text-sm text-gray-600 mb-2">
+                                  in <span className="font-medium">#{reaction.channel?.name || 'unknown'}</span> • {formatTime(reaction.created_at)}
+                                </div>
+                                <div className="bg-white rounded-lg p-3 border-l-4 border-blue-500">
+                                  {reaction.post?.title && (
+                                    <div className="font-semibold text-gray-900 mb-1">
+                                      {reaction.post.title}
+                                    </div>
+                                  )}
+                                  <div className="text-sm text-gray-700 line-clamp-2">
+                                    {reaction.post?.content || 'Post content unavailable'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center p-12">
+                        <div className="text-center">
+                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span className="text-2xl">😊</span>
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-2">No reactions yet</h3>
+                          <p className="text-gray-600 text-center max-w-sm">
+                            When people react to your posts, it will appear here.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Assigned to me Content */
+                  <div className="flex-1 flex items-center justify-center p-12">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <UserPlus className="w-8 h-8 text-gray-400" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No assignments yet</h3>
+                      <p className="text-gray-600 text-center max-w-sm">
+                        When tasks are assigned to you, they will appear here.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : activeSidebarItem === 'drafts' ? (
@@ -1520,45 +2553,9 @@ export const Chat: React.FC = () => {
                   <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
                     <Edit3 className="w-4 h-4 text-white" />
                   </div>
-                  <h2 className="text-xl font-semibold text-gray-900">Drafts & Sent</h2>
+                  <h2 className="text-xl font-semibold text-gray-900">Sent Messages</h2>
                 </div>
                 
-                {/* Tabs */}
-                <div className="flex space-x-6">
-                  <button
-                    onClick={() => setDraftsTab('drafts')}
-                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      draftsTab === 'drafts'
-                        ? 'text-gray-900 border-purple-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
-                    }`}
-                  >
-                    <Edit3 className="w-4 h-4" />
-                    <span>Drafts</span>
-                  </button>
-                  <button
-                    onClick={() => setDraftsTab('sent')}
-                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      draftsTab === 'sent'
-                        ? 'text-gray-900 border-purple-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
-                    }`}
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>Sent</span>
-                  </button>
-                  <button
-                    onClick={() => setDraftsTab('scheduled')}
-                    className={`flex items-center space-x-2 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      draftsTab === 'scheduled'
-                        ? 'text-gray-900 border-purple-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
-                    }`}
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span>Scheduled</span>
-                  </button>
-                </div>
               </div>
 
               {/* Search Bar */}
@@ -1567,13 +2564,9 @@ export const Chat: React.FC = () => {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
                     type="text"
-                    placeholder={
-                      draftsTab === 'drafts' ? 'Search drafts...' :
-                      draftsTab === 'sent' ? 'Search sent...' :
-                      'Search scheduled messages...'
-                    }
-                    value={draftsSearchQuery}
-                    onChange={(e) => setDraftsSearchQuery(e.target.value)}
+                    placeholder="Search sent messages..."
+                    value={sentSearchQuery}
+                    onChange={(e) => setSentSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                   />
                 </div>
@@ -1586,51 +2579,25 @@ export const Chat: React.FC = () => {
                     <MessageSquare className="w-3 h-3" />
                     <span>In thread</span>
                   </div>
-                  {draftsTab === 'sent' && (
-                    <div className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      <span>Sent by: You</span>
-                    </div>
-                  )}
+                  <div className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+                    <span>Sent by: You</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Upgrade notice banner - only for sent tab */}
-              {draftsTab === 'sent' && (
-                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-white text-xs">!</span>
-                      </div>
-                      <span className="text-sm text-blue-900">
-                        Need to see older messages? Upgrade to access your full Chat history.
-                      </span>
-                    </div>
-                    <button 
-                      onClick={() => setShowUpgradeModal(true)}
-                      className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
-                    >
-                      Learn more
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Table Header */}
               <div className="px-6 py-3 bg-white border-b border-gray-200">
                 <div className="grid grid-cols-3 gap-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
                   <div>Location</div>
                   <div>Message</div>
-                  <div>
-                    {draftsTab === 'sent' ? 'Sent' : 
-                     draftsTab === 'scheduled' ? 'Send' : 'Updated'}
-                  </div>
+                  <div>Sent</div>
                 </div>
               </div>
 
               {/* Content Area */}
-              <div className="flex-1 overflow-y-auto max-h-[60vh]">
-                {draftsTab === 'drafts' ? (
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-300px)] min-h-0">
+                {false ? (
                   /* Drafts Content */
                   drafts.length === 0 || (draftsSearchQuery && searchDrafts(draftsSearchQuery).length === 0) ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-12">
@@ -1732,9 +2699,9 @@ export const Chat: React.FC = () => {
                       ))}
                     </div>
                   )
-                ) : draftsTab === 'sent' ? (
+                ) : true ? (
                   /* Sent Messages Content */
-                  sentMessages.length === 0 || (draftsSearchQuery && searchSent(draftsSearchQuery).length === 0) ? (
+                  sentMessages.length === 0 || (sentSearchQuery && searchSent(sentSearchQuery).length === 0) ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-12">
                       <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
                         <div className="w-10 h-10 border-2 border-gray-400 rounded-full flex items-center justify-center">
@@ -1748,26 +2715,37 @@ export const Chat: React.FC = () => {
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
-                      {(draftsSearchQuery ? searchSent(draftsSearchQuery) : sentMessages).map((message) => (
-                        <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                      {(sentSearchQuery ? searchSent(sentSearchQuery) : sentMessages).map((message) => (
+                        <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                             onClick={() => handleNavigateToMessage(message)}>
                           <div className="grid grid-cols-3 gap-4 items-start">
                             <div className="flex items-center space-x-2">
-                              <Hash className="w-4 h-4 text-gray-400" />
-                              <span className="text-sm text-gray-900 truncate">{message.location}</span>
+                              {message.message_type === 'channel' ? (
+                                <Hash className="w-4 h-4 text-gray-400" />
+                              ) : (
+                                <MessageSquare className="w-4 h-4 text-gray-400" />
+                              )}
+                              <span className="text-sm text-gray-900 truncate">
+                                {message.message_type === 'channel' ? `#${message.location_name}` : message.location_name}
+                              </span>
                             </div>
                             <div className="flex items-start justify-between group">
-                              <p className="text-sm text-gray-900 flex-1 pr-4">{message.message}</p>
+                              <p className="text-sm text-gray-900 flex-1 pr-4 line-clamp-2">{message.content}</p>
                               <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   className="p-1 text-gray-400 hover:text-gray-600 rounded"
-                                  title="View message"
+                                  title="Go to message"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNavigateToMessage(message);
+                                  }}
                                 >
                                   <Eye className="w-4 h-4" />
                                 </button>
                               </div>
                             </div>
                             <div className="text-sm text-gray-500">
-                              {new Date(message.sentAt).toLocaleDateString()}
+                              {new Date(message.created_at).toLocaleDateString()} at {new Date(message.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                             </div>
                           </div>
                         </div>
@@ -1843,71 +2821,6 @@ export const Chat: React.FC = () => {
         </div>
       </div>
 
-      {/* Create Channel Modal */}
-      {showCreateChannelModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Create Channel</h2>
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Channel Name
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Hash className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={newChannelName}
-                    onChange={(e) => setNewChannelName(e.target.value)}
-                    placeholder="channel-name"
-                    className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    onKeyPress={(e) => e.key === 'Enter' && handleCreateChannel()}
-                  />
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Channel names must be lowercase, without spaces or periods, and can't be longer than 22 characters.
-                </p>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description (optional)
-                </label>
-                <textarea
-                  value={newChannelDescription}
-                  onChange={(e) => setNewChannelDescription(e.target.value)}
-                  placeholder="What's this channel about?"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  rows={3}
-                />
-              </div>
-
-              <div className="flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setShowCreateChannelModal(false);
-                    setNewChannelName('');
-                    setNewChannelDescription('');
-                  }}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateChannel}
-                  disabled={!newChannelName.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Create Channel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Add Members Modal */}
       {showAddMembersModal && selectedChannel && (
@@ -2141,6 +3054,14 @@ export const Chat: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Channel Creation Modal */}
+      <ChannelCreateModal
+        isOpen={showCreateChannelModal}
+        onClose={() => setShowCreateChannelModal(false)}
+        onSubmit={handleCreateChannel}
+        isLoading={creatingChannel}
+      />
 
     </div>
   );
