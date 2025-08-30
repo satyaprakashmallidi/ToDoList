@@ -29,23 +29,93 @@ export function useChannels() {
 
     try {
       // First get the user's team invite IDs (user might be in multiple teams)
-      const { data: teamMembers, error: teamError } = await supabase
+      let teamMembers;
+      let teamError;
+      
+      const result = await supabase
         .from('team_members')
         .select('team_invite_id')
         .eq('user_id', user.id);
+        
+      teamMembers = result.data;
+      teamError = result.error;
 
       if (teamError || !teamMembers || teamMembers.length === 0) {
-        console.error('No team membership found:', teamError);
-        setChannels([]);
-        setLoading(false);
-        return;
+        console.log('No team membership found, creating default team membership');
+        
+        // Create a default team invite and membership for this user
+        try {
+          // First create a team invite with 6-character unique code
+          // Try different variations if there are conflicts
+          let uniqueCode = user.id.substring(0, 6).toUpperCase();
+          let teamInvite = null;
+          let inviteError = null;
+          
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const result = await supabase
+              .from('team_invites')
+              .insert({
+                code: uniqueCode,
+                created_by: user.id,
+                expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString() // 1 year from now
+              })
+              .select()
+              .single();
+              
+            teamInvite = result.data;
+            inviteError = result.error;
+            
+            if (!inviteError) break; // Success
+            
+            // If duplicate, try with a different variation
+            if (inviteError.code === '23505') { // Unique constraint violation
+              uniqueCode = (user.id.substring(0, 4) + String(attempt + 1).padStart(2, '0')).toUpperCase();
+              continue;
+            }
+            
+            // Other error, break
+            break;
+          }
+
+          if (inviteError || !teamInvite) {
+            console.error('Failed to create default team invite:', inviteError);
+            setChannels([]);
+            setLoading(false);
+            return;
+          }
+
+          // Then create team membership
+          const { error: memberError } = await supabase
+            .from('team_members')
+            .insert({
+              user_id: user.id,
+              team_invite_id: teamInvite.id
+            });
+
+          if (memberError) {
+            console.error('Failed to create default team membership:', memberError);
+            setChannels([]);
+            setLoading(false);
+            return;
+          }
+
+          console.log('✅ Created default team membership with code:', uniqueCode, 'team_invite_id:', teamInvite.id);
+          
+          // Set the newly created team membership for use
+          teamMembers = [{ team_invite_id: teamInvite.id }];
+        } catch (error) {
+          console.error('Error creating default team membership:', error);
+          setChannels([]);
+          setLoading(false);
+          return;
+        }
       }
 
       // Use the first team for now (you might want to let user choose later)
       const teamMember = teamMembers[0];
       console.log(`Found ${teamMembers.length} team memberships, using first one:`, teamMember);
 
-      // Get channels for the user's team via channel_members
+      // Get channels where user is a member (regardless of team_invite_id for now)
       const { data: userChannelMemberships, error: membershipsError } = await supabase
         .from('channel_members')
         .select(`
@@ -53,9 +123,10 @@ export function useChannels() {
           channels!inner(*)
         `)
         .eq('user_id', user.id)
-        .eq('channels.team_invite_id', teamMember.team_invite_id)
         .eq('channels.is_archived', false)
         .is('left_at', null);
+
+      console.log('Channel memberships found:', userChannelMemberships?.length || 0);
 
       if (membershipsError) {
         console.error('Error loading channel memberships:', membershipsError);
@@ -511,7 +582,8 @@ export function useChannels() {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
+      // First get direct conversations without profile joins
+      const { data: conversations, error } = await supabase
         .from('direct_conversations')
         .select(`
           id,
@@ -528,7 +600,43 @@ export function useChannels() {
         return;
       }
 
-      setDirectConversations(data || []);
+      console.log('📇 Direct conversations loaded (without profiles):', conversations?.length || 0);
+
+      if (!conversations || conversations.length === 0) {
+        setDirectConversations([]);
+        return;
+      }
+
+      // Get unique user IDs from conversations to fetch profiles separately
+      const userIds = new Set<string>();
+      conversations.forEach(conv => {
+        userIds.add(conv.user1_id);
+        userIds.add(conv.user2_id);
+      });
+
+      // Fetch profiles for all users involved in conversations
+      const { data: profiles, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, full_name, name, email, avatar_url')
+        .in('id', Array.from(userIds));
+
+      if (profileError) {
+        console.error('Error loading profiles for direct conversations:', profileError);
+        // Continue without profile data
+      }
+
+      // Create profile lookup map
+      const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+
+      // Combine conversations with profile data
+      const conversationsWithProfiles = conversations.map(conv => ({
+        ...conv,
+        user1_profile: profileMap.get(conv.user1_id) || null,
+        user2_profile: profileMap.get(conv.user2_id) || null
+      }));
+
+      console.log('📇 Direct conversations with profiles:', conversationsWithProfiles.length, conversationsWithProfiles);
+      setDirectConversations(conversationsWithProfiles);
     } catch (err) {
       console.error('Failed to load direct conversations:', err);
     }
@@ -1501,22 +1609,36 @@ export function useChannels() {
       // Get conversation partner names for direct messages
       let conversationNames: Record<string, string> = {};
       if (conversationIds.length > 0) {
+        // First get conversations without profile joins
         const { data: conversations } = await supabase
           .from('direct_conversations')
           .select(`
             id,
             user1_id,
-            user2_id,
-            profiles_user1:profiles!direct_conversations_user1_id_fkey(full_name, email),
-            profiles_user2:profiles!direct_conversations_user2_id_fkey(full_name, email)
+            user2_id
           `)
           .in('id', conversationIds);
 
-        if (conversations) {
+        if (conversations && conversations.length > 0) {
+          // Get user IDs for profile lookup
+          const allUserIds = new Set<string>();
+          conversations.forEach(conv => {
+            allUserIds.add(conv.user1_id);
+            allUserIds.add(conv.user2_id);
+          });
+
+          // Fetch profiles separately
+          const { data: userProfiles } = await supabase
+            .from('profiles')
+            .select('id, full_name, email')
+            .in('id', Array.from(allUserIds));
+
+          const profileMap = new Map((userProfiles || []).map(p => [p.id, p]));
+
           conversationNames = conversations.reduce((acc, conv) => {
-            // Get the other user's name (not the current user)
-            const otherUser = conv.user1_id === user.id ? conv.profiles_user2 : conv.profiles_user1;
+            // Get the other user's info (not the current user)
             const otherUserId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
+            const otherUser = profileMap.get(otherUserId);
             acc[conv.id] = otherUser?.full_name || otherUser?.email || 'Unknown User';
             
             // Also store the other user's ID for navigation purposes

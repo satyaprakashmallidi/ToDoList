@@ -156,6 +156,9 @@ export const Chat: React.FC = () => {
   const [sentSearchQuery, setSentSearchQuery] = useState('');
   const [sentMessages, setSentMessages] = useState<any[]>([]);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [selectedSentByUser, setSelectedSentByUser] = useState<string | null>(null);
+  const [showSentByDropdown, setShowSentByDropdown] = useState(false);
+  const [receivedMessages, setReceivedMessages] = useState<any[]>([]);
   
   // Post reactions and comments state
   const [postReactions, setPostReactions] = useState<Record<string, any[]>>({});
@@ -197,31 +200,53 @@ export const Chat: React.FC = () => {
   }, [user]);
 
   const fetchTeamMembers = async () => {
+    console.log('🔍 Fetching team members for user:', user?.email);
     try {
-      // Step 1: Get team members where current user is involved
-      const { data: teamMemberships, error: teamError } = await supabase
+      // Step 1: Get current user's team invite IDs
+      const { data: userTeams, error: userTeamError } = await supabase
         .from('team_members')
-        .select('user_id, admin_id, team_invite_id')
-        .or(`user_id.eq.${user?.id},admin_id.eq.${user?.id}`);
+        .select('team_invite_id')
+        .eq('user_id', user?.id);
+      
+      console.log('📋 User teams found:', userTeams?.length || 0, userTeams);
 
-      if (teamError) {
-        console.error('Error fetching team memberships:', teamError);
+      if (userTeamError) {
+        console.error('Error fetching user teams:', userTeamError);
         return;
       }
 
-      if (!teamMemberships || teamMemberships.length === 0) {
+      if (!userTeams || userTeams.length === 0) {
         setTeamMembers([]);
         return;
       }
 
-      // Step 2: Get all unique user IDs from the team memberships
+      // Step 2: Get all team members from the same teams
+      const teamInviteIds = userTeams.map(t => t.team_invite_id);
+      const { data: allTeamMembers, error: teamError } = await supabase
+        .from('team_members')
+        .select('user_id, team_invite_id')
+        .in('team_invite_id', teamInviteIds);
+
+      if (teamError) {
+        console.error('Error fetching team members:', teamError);
+        return;
+      }
+
+      if (!allTeamMembers || allTeamMembers.length === 0) {
+        console.log('⚠️ No team members found in any teams');
+        setTeamMembers([]);
+        return;
+      }
+      
+      console.log('👥 All team members found:', allTeamMembers.length);
+
+      // Step 3: Get all unique user IDs from the team memberships
       const allUserIds = new Set<string>();
-      teamMemberships.forEach((membership: any) => {
+      allTeamMembers.forEach((membership: any) => {
         if (membership.user_id) allUserIds.add(membership.user_id);
-        if (membership.admin_id) allUserIds.add(membership.admin_id);
       });
 
-      // Step 3: Get profile information for all these users
+      // Step 4: Get profile information for all these users
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
         .select('id, email, full_name, name, avatar_url')
@@ -232,7 +257,7 @@ export const Chat: React.FC = () => {
         return;
       }
 
-      // Step 4: Create team members list
+      // Step 5: Create team members list
       const members: TeamMember[] = [];
       const memberIds = new Set<string>();
 
@@ -240,8 +265,8 @@ export const Chat: React.FC = () => {
         profiles.forEach((profile: any) => {
           if (!memberIds.has(profile.id) && profile.id !== user?.id) {
             memberIds.add(profile.id);
-            // Check if this user is an admin in any team the current user is part of
-            const isAdmin = teamMemberships.some((tm: any) => tm.admin_id === profile.id);
+            // Since we don't have admin info, treat all as regular members
+            const isAdmin = false;
             
             members.push({
               id: profile.id,
@@ -255,9 +280,10 @@ export const Chat: React.FC = () => {
         });
       }
 
+      console.log('✅ Team members set:', members.length, members.map(m => m.name));
       setTeamMembers(members);
     } catch (error) {
-      console.error('Error fetching team members:', error);
+      console.error('❌ Error fetching team members:', error);
     }
   };
 
@@ -427,17 +453,32 @@ export const Chat: React.FC = () => {
     }
   };
 
-  // Transform team members to direct messages format (excluding current user)
-  const availableDirectMessages: DirectMessage[] = teamMembers
-    .filter(member => member.id !== user?.id) // Exclude current user
-    .map(member => ({
-      id: member.id,
-      name: member.name,
-      status: getMemberStatus(member.id) as 'online' | 'offline',
-      avatar: member.avatar,
-      lastMessage: '',
-      unread: false
-    }));
+  // Transform direct conversations to direct messages format
+  console.log('🔍 Debug directConversations:', directConversations);
+  
+  const availableDirectMessages: DirectMessage[] = directConversations
+    .map(conversation => {
+      console.log('🔍 Processing conversation:', conversation);
+      
+      // Get the other user in the conversation (not the current user)
+      const otherUserId = conversation.user1_id === user?.id ? conversation.user2_id : conversation.user1_id;
+      const otherUserProfile = conversation.user1_id === user?.id ? conversation.user2_profile : conversation.user1_profile;
+      
+      console.log('🔍 Other user ID:', otherUserId);
+      console.log('🔍 Other user profile:', otherUserProfile);
+      
+      return {
+        id: otherUserId,
+        name: otherUserProfile?.full_name || otherUserProfile?.name || otherUserProfile?.email || 'Unknown User',
+        status: getMemberStatus(otherUserId) as 'online' | 'offline',
+        avatar: otherUserProfile?.avatar_url || '',
+        lastMessage: '',
+        unread: false
+      };
+    })
+    .filter(dm => dm.id !== user?.id); // Extra safety to exclude current user
+
+  console.log('📱 Available direct messages:', availableDirectMessages.length, availableDirectMessages.map(dm => dm.name));
 
   // Current user is excluded from direct messages list
 
@@ -534,13 +575,193 @@ export const Chat: React.FC = () => {
     loadSentMessages();
   }, [activeSidebarItem, getSentMessages]);
 
-  // Search function for sent messages
+  // Load received messages when a specific user is selected
+  useEffect(() => {
+    const loadReceivedMessages = async () => {
+      if (selectedSentByUser && activeSidebarItem === 'drafts') {
+        console.log('Loading received messages from user:', selectedSentByUser);
+        try {
+          const received = await getReceivedMessagesFrom(selectedSentByUser);
+          setReceivedMessages(received);
+          console.log('Received messages loaded:', received.length);
+        } catch (error) {
+          console.error('Failed to load received messages:', error);
+        }
+      } else if (!selectedSentByUser) {
+        // Clear received messages when no user is selected
+        setReceivedMessages([]);
+      }
+    };
+
+    loadReceivedMessages();
+  }, [selectedSentByUser, activeSidebarItem, user]);
+
+  // Handle clicking outside the sent by dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showSentByDropdown && !(event.target as Element).closest('.relative')) {
+        setShowSentByDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showSentByDropdown]);
+
+  // Get all unique users (merge team members and direct messages, removing duplicates)
+  const getAllUniqueUsers = () => {
+    const allUsers = [...teamMembers, ...availableDirectMessages];
+    const uniqueUsers = allUsers.reduce((acc: typeof teamMembers, current) => {
+      if (!acc.find(user => user.id === current.id)) {
+        acc.push(current);
+      }
+      return acc;
+    }, []);
+    return uniqueUsers;
+  };
+
+  // Get messages received from a specific user
+  const getReceivedMessagesFrom = async (fromUserId: string) => {
+    if (!user) return [];
+
+    try {
+      let allReceivedMessages: any[] = [];
+
+      // Get direct messages sent by the specific user to current user (without foreign key joins)
+      const { data: directMessages, error: directError } = await supabase
+        .from('direct_messages')
+        .select(`
+          id,
+          conversation_id,
+          sender_id,
+          content,
+          created_at,
+          updated_at
+        `)
+        .eq('is_deleted', false)
+        .eq('sender_id', fromUserId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!directError && directMessages) {
+        // Filter for conversations where current user is a participant
+        const { data: userConversations } = await supabase
+          .from('direct_conversations')
+          .select('id')
+          .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
+
+        const userConversationIds = new Set(userConversations?.map(c => c.id) || []);
+        
+        const relevantDirectMessages = directMessages.filter(msg => 
+          userConversationIds.has(msg.conversation_id)
+        );
+
+        // Get sender profile separately if we have messages
+        let senderProfile = null;
+        if (relevantDirectMessages.length > 0) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id, full_name, email')
+            .eq('id', fromUserId)
+            .single();
+          senderProfile = profile;
+        }
+
+        allReceivedMessages = [...allReceivedMessages, ...relevantDirectMessages.map(msg => ({
+          ...msg,
+          message_type: 'direct',
+          sender_name: senderProfile?.full_name || senderProfile?.email || 'Unknown',
+          location_name: 'Direct Message'
+        }))];
+      }
+
+      // Get channel messages sent by the specific user in channels where current user is a member
+      // First get channels where current user is a member
+      const { data: userChannels } = await supabase
+        .from('channel_members')
+        .select('channel_id')
+        .eq('user_id', user.id);
+
+      if (userChannels && userChannels.length > 0) {
+        const channelIds = userChannels.map(uc => uc.channel_id);
+
+        const { data: channelMessages, error: channelError } = await supabase
+          .from('channel_messages')
+          .select(`
+            id,
+            channel_id,
+            sender_id,
+            content,
+            created_at,
+            updated_at
+          `)
+          .eq('is_deleted', false)
+          .eq('sender_id', fromUserId)
+          .in('channel_id', channelIds)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (!channelError && channelMessages && channelMessages.length > 0) {
+          // Get sender profile and channel names separately
+          const [senderProfileResult, channelsResult] = await Promise.all([
+            supabase
+              .from('profiles')
+              .select('id, full_name, email')
+              .eq('id', fromUserId)
+              .single(),
+            supabase
+              .from('channels')
+              .select('id, name')
+              .in('id', channelIds)
+          ]);
+
+          const senderProfile = senderProfileResult.data;
+          const channelNamesMap = new Map((channelsResult.data || []).map(ch => [ch.id, ch.name]));
+
+          allReceivedMessages = [...allReceivedMessages, ...channelMessages.map(msg => ({
+            ...msg,
+            message_type: 'channel',
+            sender_name: senderProfile?.full_name || senderProfile?.email || 'Unknown',
+            location_name: channelNamesMap.get(msg.channel_id) || 'Unknown Channel'
+          }))];
+        }
+      }
+
+      // Sort all messages by created_at (most recent first)
+      allReceivedMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      return allReceivedMessages;
+    } catch (error) {
+      console.error('Failed to get received messages from user:', error);
+      return [];
+    }
+  };
+
+  // Search function for messages (sent or received based on selection)
   const searchSent = (query: string) => {
-    if (!query.trim()) return sentMessages;
-    return sentMessages.filter(message => 
+    // Use received messages if a specific user is selected, otherwise use sent messages
+    let filtered = selectedSentByUser ? receivedMessages : sentMessages;
+    
+    console.log('searchSent called:', {
+      selectedSentByUser,
+      usingReceivedMessages: !!selectedSentByUser,
+      sentMessagesCount: sentMessages.length,
+      receivedMessagesCount: receivedMessages.length,
+      filteredCount: filtered.length,
+      query
+    });
+    
+    // Then apply search query
+    if (!query.trim()) return filtered;
+    const searchResult = filtered.filter(message => 
       message.content?.toLowerCase().includes(query.toLowerCase()) ||
       message.location_name?.toLowerCase().includes(query.toLowerCase())
     );
+    
+    console.log('Search result count:', searchResult.length);
+    return searchResult;
   };
 
   // Function to handle marking a reply as read
@@ -2572,15 +2793,67 @@ export const Chat: React.FC = () => {
                 </div>
               </div>
 
-              {/* Thread indicator and Sent by filter */}
+              {/* Sent by filter */}
               <div className="px-6 py-2 bg-gray-50">
                 <div className="flex items-center space-x-2">
-                  <div className="inline-flex items-center space-x-2 px-2 py-1 bg-gray-200 rounded text-xs text-gray-600">
-                    <MessageSquare className="w-3 h-3" />
-                    <span>In thread</span>
-                  </div>
-                  <div className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                    <span>Sent by: You</span>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowSentByDropdown(!showSentByDropdown)}
+                      className="inline-flex items-center space-x-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs hover:bg-blue-200 transition-colors"
+                    >
+                      <span>
+                        {selectedSentByUser ? 
+                          `Sent by: ${getAllUniqueUsers().find(u => u.id === selectedSentByUser)?.name || 'Unknown'}` : 
+                          'Sent by: You'
+                        }
+                      </span>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    
+                    {showSentByDropdown && (
+                      <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                        <div className="max-h-60 overflow-y-auto">
+                          <button
+                            onClick={() => {
+                              setSelectedSentByUser(null);
+                              setShowSentByDropdown(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 ${!selectedSentByUser ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}`}
+                          >
+                            You (Your sent messages)
+                          </button>
+                          
+                          {/* All Users (merged, no duplicates) */}
+                          {getAllUniqueUsers().length > 0 && (
+                            <>
+                              <div className="px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider border-t border-gray-100">
+                                People
+                              </div>
+                              {getAllUniqueUsers().map(user => (
+                                <button
+                                  key={user.id}
+                                  onClick={() => {
+                                    setSelectedSentByUser(user.id);
+                                    setShowSentByDropdown(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 flex items-center space-x-2 ${selectedSentByUser === user.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}`}
+                                >
+                                  <div className="w-6 h-6 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                    {user.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-medium">{user.name}</div>
+                                    <div className="text-xs text-gray-500">{user.email}</div>
+                                  </div>
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2701,7 +2974,7 @@ export const Chat: React.FC = () => {
                   )
                 ) : true ? (
                   /* Sent Messages Content */
-                  sentMessages.length === 0 || (sentSearchQuery && searchSent(sentSearchQuery).length === 0) ? (
+                  (selectedSentByUser ? receivedMessages : sentMessages).length === 0 || (sentSearchQuery && searchSent(sentSearchQuery).length === 0) ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-12">
                       <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
                         <div className="w-10 h-10 border-2 border-gray-400 rounded-full flex items-center justify-center">
@@ -2710,12 +2983,15 @@ export const Chat: React.FC = () => {
                       </div>
                       <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
                       <p className="text-gray-600 text-center max-w-sm">
-                        Looks like you don't have any sent messages
+                        {selectedSentByUser 
+                          ? `No messages found from ${getAllUniqueUsers().find(u => u.id === selectedSentByUser)?.name || 'this user'}`
+                          : "Looks like you don't have any sent messages"
+                        }
                       </p>
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
-                      {(sentSearchQuery ? searchSent(sentSearchQuery) : sentMessages).map((message) => (
+                      {(sentSearchQuery ? searchSent(sentSearchQuery) : (selectedSentByUser ? receivedMessages : sentMessages)).map((message) => (
                         <div key={message.id} className="px-6 py-4 hover:bg-gray-50 transition-colors cursor-pointer"
                              onClick={() => handleNavigateToMessage(message)}>
                           <div className="grid grid-cols-3 gap-4 items-start">

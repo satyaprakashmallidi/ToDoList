@@ -144,8 +144,7 @@ export const Teams: React.FC = () => {
           .from('team_members')
           .insert({
             user_id: user.id,
-            team_invite_id: data.id,
-            admin_id: user.id
+            team_invite_id: data.id
           })
 
         if (memberError) {
@@ -155,14 +154,15 @@ export const Teams: React.FC = () => {
       } else {
         // For existing teams, update all existing members to use the new invite ID
         // This maintains team continuity across invite code regenerations
-        const { error: updateError } = await supabase
-          .from('team_members')
-          .update({ team_invite_id: data.id })
-          .eq('admin_id', user.id)
+        // TODO: Update existing team members when admin_id column is available
+        // const { error: updateError } = await supabase
+        //   .from('team_members')
+        //   .update({ team_invite_id: data.id })
+        //   .eq('admin_id', user.id)
 
-        if (updateError) {
-          console.warn('Failed to update existing team members:', updateError)
-        }
+        // if (updateError) {
+        //   console.warn('Failed to update existing team members:', updateError)
+        // }
       }
 
       setInviteCode(code)
@@ -207,11 +207,22 @@ export const Teams: React.FC = () => {
     try {
       setLoadingMembers(true)
 
-      // Get team members who joined through this user's invite codes
+      // Get team members from the same teams as the current user
+      // First get current user's team invite IDs
+      const { data: userTeams, error: userTeamError } = await supabase
+        .from('team_members')
+        .select('team_invite_id')
+        .eq('user_id', user.id)
+
+      if (userTeamError) throw userTeamError
+
+      const teamInviteIds = userTeams?.map(t => t.team_invite_id) || []
+      
+      // Get all members from the same teams
       const { data: members, error: membersError } = await supabase
         .from('team_members')
         .select('*')
-        .eq('admin_id', user.id)
+        .in('team_invite_id', teamInviteIds)
 
       if (membersError) throw membersError
 
@@ -272,7 +283,7 @@ export const Teams: React.FC = () => {
         .from('team_members')
         .delete()
         .eq('id', memberId)
-        .eq('admin_id', user?.id) // Ensure only admin can remove
+        // TODO: Add admin check when admin_id column is available
 
       if (error) throw error
 
@@ -329,12 +340,12 @@ export const Teams: React.FC = () => {
         return
       }
 
-      // Check if user is already a member of ANY team by this admin (team continuity)
+      // Check if user is already a member of this team invite
       const { data: existingMember } = await supabase
         .from('team_members')
         .select('*')
         .eq('user_id', user.id)
-        .eq('admin_id', inviteData.created_by)
+        .eq('team_invite_id', inviteData.id)
         .single()
 
       if (existingMember) {
@@ -357,8 +368,7 @@ export const Teams: React.FC = () => {
         .from('team_members')
         .insert({
           user_id: user.id,
-          team_invite_id: inviteData.id,
-          admin_id: inviteData.created_by
+          team_invite_id: inviteData.id
         })
 
       if (memberError) {
