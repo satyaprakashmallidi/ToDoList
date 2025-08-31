@@ -90,6 +90,8 @@ export const Dashboard: React.FC = () => {
   const [showFocusDropdown, setShowFocusDropdown] = useState(false);
   const [selectedFocusOption, setSelectedFocusOption] = useState('Deep Work');
   const [isTimerHovered, setIsTimerHovered] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [statusSubscription, setStatusSubscription] = useState<any>(null);
   
   
   // Update your options to hold an svg property
@@ -363,6 +365,136 @@ export const Dashboard: React.FC = () => {
     getMonthMinutesByCategory
   } = useTimeStore();
 
+  // Fetch team members from database
+  const fetchTeamMembers = async () => {
+    if (!user?.id) return;
+    
+    try {
+      // First get user's team invite IDs
+      const { data: userTeams, error: teamsError } = await supabase
+        .from('team_members')
+        .select('team_invite_id')
+        .eq('user_id', user.id);
+      
+      if (teamsError) {
+        console.error('Error fetching user teams:', teamsError);
+        return;
+      }
+      
+      if (!userTeams || userTeams.length === 0) {
+        setTeamMembers([]);
+        return;
+      }
+      
+      const teamInviteIds = userTeams.map(t => t.team_invite_id);
+      
+      // Get all team members from the same teams
+      const { data: members, error: membersError } = await supabase
+        .from('team_members')
+        .select('user_id, team_invite_id')
+        .in('team_invite_id', teamInviteIds);
+      
+      if (membersError) {
+        console.error('Error fetching team members:', membersError);
+        return;
+      }
+      
+      if (!members || members.length === 0) {
+        setTeamMembers([]);
+        return;
+      }
+      
+      // Get unique user IDs excluding current user
+      const userIds = [...new Set(members.map(m => m.user_id))];
+      
+      // Fetch profiles and status for all team members
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, avatar_url')
+        .in('id', userIds);
+      
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+        return;
+      }
+      
+      // Fetch current status for all team members
+      const { data: statuses, error: statusError } = await supabase
+        .from('user_status')
+        .select('*')
+        .in('user_id', userIds);
+      
+      if (statusError) {
+        console.error('Error fetching status:', statusError);
+      }
+      
+      // Combine profile and status data
+      const teamMembersWithStatus = profiles?.map(profile => {
+        const status = statuses?.find(s => s.user_id === profile.id);
+        return {
+          ...profile,
+          name: profile.full_name || profile.email,
+          status: status?.status || 'offline',
+          activity: status?.activity,
+          last_active: status?.last_active
+        };
+      }) || [];
+      
+      setTeamMembers(teamMembersWithStatus);
+    } catch (error) {
+      console.error('Error in fetchTeamMembers:', error);
+    }
+  };
+  
+  // Update user's own status in database
+  const updateUserStatus = async (status: 'online' | 'break' | 'offline', activity?: string) => {
+    if (!user?.id) return;
+    
+    try {
+      const statusData = {
+        user_id: user.id,
+        status,
+        activity: activity || null,
+        session_start: status === 'online' ? new Date().toISOString() : null,
+        last_active: new Date().toISOString()
+      };
+      
+      // Upsert status (insert or update)
+      const { error } = await supabase
+        .from('user_status')
+        .upsert(statusData, {
+          onConflict: 'user_id'
+        });
+      
+      if (error) {
+        console.error('Error updating user status:', error);
+      }
+    } catch (error) {
+      console.error('Error in updateUserStatus:', error);
+    }
+  };
+  
+  // Setup real-time subscription for team member status
+  const setupStatusSubscription = () => {
+    if (!user?.id) return;
+    
+    // Subscribe to changes in user_status table
+    const subscription = supabase
+      .channel('team-status-changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'user_status'
+      }, (payload) => {
+        console.log('Status change:', payload);
+        // Refresh team members when status changes
+        fetchTeamMembers();
+      })
+      .subscribe();
+    
+    setStatusSubscription(subscription);
+  };
+  
   // Fetch tasks from Supabase
   const fetchTasks = async () => {
     if (!user?.id) return;
@@ -386,6 +518,38 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  // Initialize team members and status subscription
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    fetchTeamMembers();
+    setupStatusSubscription();
+    
+    // Cleanup subscription on unmount
+    return () => {
+      if (statusSubscription) {
+        supabase.removeChannel(statusSubscription);
+      }
+    };
+  }, [user?.id]);
+  
+  // Update status when timer state changes
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    if (isRunning && runningSession) {
+      // Timer is running - user is online
+      const activity = selectedMusicMode || 'focus';
+      updateUserStatus('online', activity);
+    } else if (isPaused && runningSession) {
+      // Timer is paused - user is on break
+      updateUserStatus('break');
+    } else {
+      // Timer is stopped - user is offline
+      updateUserStatus('offline');
+    }
+  }, [isRunning, isPaused, runningSession, selectedMusicMode, user?.id]);
+  
   // Set up real-time subscription for tasks
   useEffect(() => {
     if (!user?.id) return;
@@ -1015,14 +1179,32 @@ export const Dashboard: React.FC = () => {
     return { status: 'Offline', color: 'bg-gray-400', animate: '' };
   };
 
-  // Team members with dynamic status - only show when actively working
+  // Team members with dynamic status - show all team members with their status
   const getTeamMembers = () => {
     const currentUser = getCurrentUserStatus();
-    // Only include user if they're actually Online (timer running)
-    if (currentUser.status === 'Online') {
-      return [{ name: 'You', ...currentUser }];
-    }
-    return [];
+    const allMembers = [];
+    
+    // Add current user first
+    allMembers.push({ name: 'You', ...currentUser });
+    
+    // Add team members from database
+    teamMembers.forEach(member => {
+      let statusInfo = { status: 'Offline', color: 'bg-gray-400', animate: '' };
+      
+      if (member.status === 'online') {
+        statusInfo = { status: 'Online', color: 'bg-green-500', animate: 'animate-pulse' };
+      } else if (member.status === 'break') {
+        statusInfo = { status: 'Break', color: 'bg-yellow-500', animate: 'animate-pulse' };
+      }
+      
+      allMembers.push({
+        name: member.name,
+        ...statusInfo,
+        activity: member.activity
+      });
+    });
+    
+    return allMembers;
   };
 
 

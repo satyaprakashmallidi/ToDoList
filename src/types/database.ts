@@ -822,6 +822,38 @@ export interface Database {
           }
         ]
       }
+      user_status: {
+        Row: {
+          id: string
+          user_id: string
+          status: 'online' | 'break' | 'offline'
+          activity: string | null
+          session_start: string | null
+          last_active: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          status: 'online' | 'break' | 'offline'
+          activity?: string | null
+          session_start?: string | null
+          last_active?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          status?: 'online' | 'break' | 'offline'
+          activity?: string | null
+          session_start?: string | null
+          last_active?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
       message_reads: {
         Row: {
           id: string
