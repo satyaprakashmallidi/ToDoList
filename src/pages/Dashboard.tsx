@@ -89,6 +89,9 @@ export const Dashboard: React.FC = () => {
   // Focus dropdown state and options
   const [showFocusDropdown, setShowFocusDropdown] = useState(false);
   const [selectedFocusOption, setSelectedFocusOption] = useState('Deep Work');
+  const [selectedRelaxOption, setSelectedRelaxOption] = useState('Chill');
+  const [selectedSleepOption, setSelectedSleepOption] = useState('Deep Sleep');
+  const [selectedMeditateOption, setSelectedMeditateOption] = useState('Guided');
   const [isTimerHovered, setIsTimerHovered] = useState(false);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [statusSubscription, setStatusSubscription] = useState<any>(null);
@@ -132,22 +135,86 @@ export const Dashboard: React.FC = () => {
       ) }
     ],
     relax: [
-      { id: 'nature-sounds', label: 'Nature Sounds', svg: (
+      { id: 'chill', label: 'Chill', svg: (
         <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <ellipse cx="10" cy="15" rx="6" ry="3"/>
-          <rect x="7" y="12" width="6" height="6" rx="3"/>
+          <path d="M10 2v6m0 4v6m-4-8l4-4 4 4M6 14l4 4 4-4"/>
         </svg>
       ) },
-      { id: 'ambient', label: 'Ambient', svg: (
+      { id: 'destress', label: 'Destress', svg: (
         <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="7"/>
+          <circle cx="10" cy="10" r="8"/>
+          <path d="M14 8l-4 4-2-2"/>
+        </svg>
+      ) },
+      { id: 'recharge', label: 'Recharge', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <rect x="5" y="7" width="10" height="10" rx="1"/>
+          <path d="M8 7V5a1 1 0 011-1h2a1 1 0 011 1v2"/>
+        </svg>
+      ) },
+      { id: 'travel', label: 'Travel', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <circle cx="10" cy="10" r="8"/>
+          <path d="M2 10h16M10 2s3 3 3 8-3 8-3 8M10 2s-3 3-3 8 3 8 3 8"/>
+        </svg>
+      ) },
+      { id: 'unwind', label: 'Unwind', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0z"/>
+          <path d="M10 6v4l3 3"/>
+        </svg>
+      ) }
+    ],
+    sleep: [
+      { id: 'deep-sleep', label: 'Deep Sleep', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <path d="M17 10A7 7 0 1 1 10 3a5 5 0 0 0 7 7z"/>
+        </svg>
+      ) },
+      { id: 'guided-sleep', label: 'Guided Sleep', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
           <circle cx="10" cy="10" r="3"/>
+          <line x1="10" y1="3" x2="10" y2="5"/>
+          <line x1="10" y1="15" x2="10" y2="17"/>
+          <line x1="5" y1="5" x2="6.5" y2="6.5"/>
+          <line x1="13.5" y1="13.5" x2="15" y2="15"/>
+          <line x1="3" y1="10" x2="5" y2="10"/>
+          <line x1="15" y1="10" x2="17" y2="10"/>
+          <line x1="5" y1="15" x2="6.5" y2="13.5"/>
+          <line x1="13.5" y1="6.5" x2="15" y2="5"/>
         </svg>
       ) },
-      { id: 'breathing', label: 'Breathing', svg: (
+      { id: 'power-nap', label: 'Power Nap', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <polyline points="8,1 12,9 9,9 12,19 7,13 11,13 8,1"/>
+        </svg>
+      ) },
+      { id: 'sleep-wake', label: 'Sleep and Wake', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <circle cx="10" cy="10" r="5"/>
+          <line x1="10" y1="3" x2="10" y2="5"/>
+          <line x1="10" y1="15" x2="10" y2="17"/>
+        </svg>
+      ) },
+      { id: 'wind-down', label: 'Wind Down', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <path d="M8 6A1.5 1.5 0 1 1 9 8H3"/>
+          <path d="M12 14A1.5 1.5 0 1 0 11 12H3"/>
+          <path d="M15 10A2 2 0 1 1 16 11H3"/>
+        </svg>
+      ) }
+    ],
+    meditate: [
+      { id: 'guided', label: 'Guided', svg: (
         <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
           <circle cx="10" cy="10" r="6" opacity=".6"/>
           <circle cx="10" cy="10" r="2"/>
+        </svg>
+      ) },
+      { id: 'unguided', label: 'Unguided', svg: (
+        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
+          <circle cx="10" cy="10" r="7"/>
+          <circle cx="10" cy="10" r="3"/>
         </svg>
       ) }
     ]
@@ -1187,8 +1254,13 @@ export const Dashboard: React.FC = () => {
     // Add current user first
     allMembers.push({ name: 'You', ...currentUser });
     
-    // Add team members from database
+    // Add team members from database (exclude current user to avoid duplication)
     teamMembers.forEach(member => {
+      // Skip if this is the current user (check by email or id)
+      if (member.email === user?.email || member.user_id === user?.id) {
+        return;
+      }
+      
       let statusInfo = { status: 'Offline', color: 'bg-gray-400', animate: '' };
       
       if (member.status === 'online') {
@@ -1713,9 +1785,9 @@ export const Dashboard: React.FC = () => {
             </div>
             
             {/* Team Members */}
-            <div>
+            <div className="flex flex-col h-full">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Team Members Online</h3>
-              <div className="space-y-3">
+              <div className="overflow-y-auto max-h-64 pr-2 space-y-3" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
                 {getTeamMembers().length === 0 ? (
                   <div className="text-center py-8">
                     <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
@@ -2023,8 +2095,15 @@ export const Dashboard: React.FC = () => {
                       >
                         <span className="w-5 h-5 flex items-center justify-center">
                           {(() => {
-                            const currentOptions = musicDropdownOptions.focus;
-                            const currentOption = currentOptions.find(opt => opt.label === selectedFocusOption);
+                            const currentOptions = selectedMusicMode === 'relax' ? musicDropdownOptions.relax : 
+                                                  selectedMusicMode === 'sleep' ? musicDropdownOptions.sleep :
+                                                  selectedMusicMode === 'meditate' ? musicDropdownOptions.meditate :
+                                                  musicDropdownOptions.focus;
+                            const selectedOption = selectedMusicMode === 'relax' ? selectedRelaxOption :
+                                                 selectedMusicMode === 'sleep' ? selectedSleepOption :
+                                                 selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                                                 selectedFocusOption;
+                            const currentOption = currentOptions.find(opt => opt.label === selectedOption);
                             return currentOption?.svg || (
                               <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
                                 <line x1="10" y1="1" x2="10" y2="19"/>
@@ -2035,7 +2114,10 @@ export const Dashboard: React.FC = () => {
                             );
                           })()}
                         </span>
-                        <span className="text-sm font-medium">{selectedFocusOption}</span>
+                        <span className="text-sm font-medium">{selectedMusicMode === 'relax' ? selectedRelaxOption :
+                                                                selectedMusicMode === 'sleep' ? selectedSleepOption :
+                                                                selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                                                                selectedFocusOption}</span>
                         <svg 
                           className={`w-3 h-3 transition-transform duration-200 ${showFocusDropdown ? 'rotate-180' : ''}`} 
                           fill="none" 
@@ -2059,24 +2141,41 @@ export const Dashboard: React.FC = () => {
                               <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">ACTIVITIES</h3>
                             </div>
                             <div className="space-y-0.5">
-                              {musicDropdownOptions.focus.map((option) => (
+                              {(selectedMusicMode === 'relax' ? musicDropdownOptions.relax : 
+                                selectedMusicMode === 'sleep' ? musicDropdownOptions.sleep :
+                                selectedMusicMode === 'meditate' ? musicDropdownOptions.meditate :
+                                musicDropdownOptions.focus).map((option) => (
                                 <button
                                   key={option.id}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    setSelectedFocusOption(option.label);
+                                    if (selectedMusicMode === 'relax') {
+                                      setSelectedRelaxOption(option.label);
+                                    } else if (selectedMusicMode === 'sleep') {
+                                      setSelectedSleepOption(option.label);
+                                    } else if (selectedMusicMode === 'meditate') {
+                                      setSelectedMeditateOption(option.label);
+                                    } else {
+                                      setSelectedFocusOption(option.label);
+                                    }
                                     setShowFocusDropdown(false);
                                   }}
                                   className={`w-full flex items-center gap-2 px-2.5 py-2 text-left rounded-md transition-all duration-200 text-white ${
-                                    selectedFocusOption === option.label 
+                                    (selectedMusicMode === 'relax' ? selectedRelaxOption :
+                                     selectedMusicMode === 'sleep' ? selectedSleepOption :
+                                     selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                                     selectedFocusOption) === option.label 
                                       ? 'bg-white/20 shadow-sm' 
                                       : 'hover:bg-white/10'
                                   }`}
                                 >
                                   <span className="w-6 h-6 flex items-center justify-center">{option.svg}</span>
                                   <span className="text-sm font-medium flex-1">{option.label}</span>
-                                  {selectedFocusOption === option.label && (
+                                  {(selectedMusicMode === 'relax' ? selectedRelaxOption :
+                                   selectedMusicMode === 'sleep' ? selectedSleepOption :
+                                   selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                                   selectedFocusOption) === option.label && (
                                     <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                     </svg>
@@ -2111,11 +2210,6 @@ export const Dashboard: React.FC = () => {
                           {/* Settings gear around the note */}
                           <circle cx="19" cy="5" r="2" fill="currentColor" />
                         </g>
-                      </svg>
-                    </button>
-                    <button className="p-2 rounded-full hover:bg-white hover:bg-opacity-20 transition-colors">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                       </svg>
                     </button>
                   </div>
@@ -2232,7 +2326,7 @@ export const Dashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Bottom Right - Volume Control & Streak */}
+                {/* Bottom Right - Streak Counter */}
                 <div className="absolute bottom-4 right-4 flex items-center gap-4">
                   {/* Streak Counter */}
                   <div className="flex items-center gap-1 text-white text-sm">
@@ -2240,52 +2334,6 @@ export const Dashboard: React.FC = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
                     </svg>
                     <span>{realTimeStreak} week streak</span>
-                  </div>
-                  
-                  {/* Volume Control */}
-                  <div className="flex items-center gap-2 text-white">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                    </svg>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={volume}
-                      onChange={(e) => {
-                        const newVolume = parseInt(e.target.value);
-                        setVolume(newVolume);
-                        if (window.focusPlayer && window.focusPlayer.updateVolume) {
-                          window.focusPlayer.updateVolume(newVolume);
-                        }
-                      }}
-                      className="w-20 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer focus:outline-none"
-                      style={{
-                        background: `linear-gradient(to right, #ef4444 0%, #ef4444 ${volume}%, #4b5563 ${volume}%, #4b5563 100%)`,
-                        WebkitAppearance: 'none',
-                        height: '4px'
-                      }}
-                    />
-                    <style jsx>{`
-                      input[type="range"]::-webkit-slider-thumb {
-                        appearance: none;
-                        width: 12px;
-                        height: 12px;
-                        border-radius: 50%;
-                        background: #ffffff;
-                        cursor: pointer;
-                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-                      }
-                      input[type="range"]::-moz-range-thumb {
-                        width: 12px;
-                        height: 12px;
-                        border-radius: 50%;
-                        background: #ffffff;
-                        cursor: pointer;
-                        border: none;
-                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-                      }
-                    `}</style>
                   </div>
                 </div>
 
