@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   BarChart3, 
   Clock, 
@@ -12,7 +12,9 @@ import { Chart as ChartJS, ArcElement, CategoryScale, LinearScale, BarElement, T
 import { Bar } from 'react-chartjs-2';
 import { useAuth } from '../contexts/AuthContext';
 import { useTimeStore } from '../contexts/TimeStore';
+import { useAudio } from '../contexts/AudioContext';
 import { useSupabase } from '../hooks/useSupabase';
+import { useSubcategories } from '../hooks/useAudioFiles';
 import { Task } from '../types/tasks';
 import PomodoroTimer from '../components/PomodoroTimer';
 import { Card } from '../components/ui/card';
@@ -21,6 +23,38 @@ import { Button } from '../components/ui/button';
 ChartJS.register(ArcElement, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 export const Dashboard: React.FC = () => {
+  // Get audio context
+  const {
+    isPlaying,
+    currentTrack,
+    volume,
+    setVolume,
+    currentSongIndex,
+    setCurrentSongIndex,
+    audioFiles,
+    audioLoading,
+    sessionTime,
+    sessionStartTime,
+    isSessionActive,
+    selectedMusicMode,
+    selectedSubcategory,
+    setSelectedMusicMode,
+    setSelectedSubcategory,
+    showMusicPlayer,
+    setShowMusicPlayer,
+    playAudio,
+    pauseAudio,
+    stopAudio,
+    nextSong,
+    previousSong,
+    startSession,
+    stopSession,
+    addRecentSession,
+    addRecentTrack,
+    recentSessions,
+    recentTracks
+  } = useAudio();
+
   const [currentPhase, setCurrentPhase] = useState<'work' | 'short' | 'long'>('work');
   const [currentView, setCurrentView] = useState<'day' | 'week' | 'month'>('day');
   const [, setTick] = useState(0);
@@ -29,12 +63,8 @@ export const Dashboard: React.FC = () => {
   const [showActivityView, setShowActivityView] = useState(false);
   const [showJumpBackView, setShowJumpBackView] = useState(false);
   const [jumpBackAnimated, setJumpBackAnimated] = useState(false);
-  const [showMusicPlayer, setShowMusicPlayer] = useState(false);
-  const [selectedMusicMode, setSelectedMusicMode] = useState<'focus' | 'relax' | 'sleep' | 'meditate' | null>(null);
-  const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [selectedActivity, setSelectedActivity] = useState<string | null>(null);
   const [selectedTimer, setSelectedTimer] = useState('Infinity');
-  const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [showTimerSettings, setShowTimerSettings] = useState(false);
   const [showInlineTimerSettings, setShowInlineTimerSettings] = useState(false);
@@ -66,23 +96,8 @@ export const Dashboard: React.FC = () => {
   const [neuralEffectLevel, setNeuralEffectLevel] = useState('low');
   const [appliedGenres, setAppliedGenres] = useState<string[]>([]);
   const [appliedNeuralEffect, setAppliedNeuralEffect] = useState('low');
-  const [recentSessions, setRecentSessions] = useState<{
-    mode: string;
-    activity: string;
-    color: string;
-    startTime: Date;
-    timestamp: Date;
-  }[]>([]);
-  const [recentTracks, setRecentTracks] = useState<{
-    title: string;
-    artist: string;
-    genre: string;
-    mode: string;
-    timestamp: Date;
-  }[]>([]);
   const [timerMode, setTimerMode] = useState<'infinite' | 'timer'>('infinite');
   const [customTimer, setCustomTimer] = useState({ hours: 0, minutes: 30 });
-  const [volume, setVolume] = useState(70);
   const [realTimeStreak, setRealTimeStreak] = useState(0);
   const [isDraggingVolume, setIsDraggingVolume] = useState(false);
 
@@ -95,129 +110,167 @@ export const Dashboard: React.FC = () => {
   const [isTimerHovered, setIsTimerHovered] = useState(false);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [statusSubscription, setStatusSubscription] = useState<any>(null);
+
+  // Audio hooks and refs
+  const { subcategories } = useSubcategories(selectedMusicMode || undefined);
+
+  // Helper function to generate dynamic options with category-specific icons
+  const getDynamicOptions = (category: string) => {
+    if (selectedMusicMode !== category) return [];
+    
+    const getIconForSubcategory = (subcategory: string, category: string) => {
+      // Focus icons
+      if (category === 'focus') {
+        if (subcategory.toLowerCase().includes('deep')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <path d="M12 2L2 12l10 10 10-10-10-10z"/>
+            <path d="m8 8 4 4"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('motivation')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <polyline points="6,1 10,7 7,7 10,15 5,11 9,11 6,1"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('creativity')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <rect x="2" y="7" width="10" height="5" rx="1"/>
+            <ellipse cx="8" cy="6" rx="4" ry="2"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('learning')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <rect x="4" y="3" width="8" height="10" rx="1"/>
+            <line x1="6" y1="6" x2="10" y2="6"/>
+            <line x1="6" y1="9" x2="10" y2="9"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('light')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <path d="M8 1v2m4.5.9l-1.4 1.4M15 8h-2m-.9 4.5l-1.4-1.4M8 15v-2m-4.5-.9l1.4-1.4M1 8h2m.9-4.5l1.4 1.4"/>
+          </svg>
+        );
+      }
+      
+      // Relax icons  
+      if (category === 'relax') {
+        if (subcategory.toLowerCase().includes('chill')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <path d="M10 1L1 10l9 9 9-9-9-9z"/>
+            <path d="m6 6 4 4"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('destress')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="6"/>
+            <path d="M11 6l-3 3-2-2"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('recharge')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <rect x="3" y="5" width="10" height="8" rx="1"/>
+            <path d="M6 5V3a1 1 0 011-1h2a1 1 0 011 1v2"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('travel')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="6"/>
+            <path d="M2 8h12M8 2s2 2 2 6-2 6-2 6M8 2s-2 2-2 6 2 6 2 6"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('unwind')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="6"/>
+            <polyline points="8,4 8,8 11,11"/>
+          </svg>
+        );
+      }
+      
+      // Sleep icons
+      if (category === 'sleep') {
+        if (subcategory.toLowerCase().includes('deep')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <path d="M14 8A6 6 0 1 1 8 2a4 4 0 0 0 6 6z"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('guided')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="2"/>
+            <line x1="8" y1="2" x2="8" y2="4"/>
+            <line x1="8" y1="12" x2="8" y2="14"/>
+            <line x1="4" y1="4" x2="5.5" y2="5.5"/>
+            <line x1="10.5" y1="10.5" x2="12" y2="12"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('power')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <polyline points="6,1 10,7 7,7 10,15 5,11 9,11 6,1"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('wake')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="4"/>
+            <line x1="8" y1="2" x2="8" y2="4"/>
+            <line x1="8" y1="12" x2="8" y2="14"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('wind')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <path d="M6 4A1 1 0 1 1 7 6H2"/>
+            <path d="M10 11A1 1 0 1 0 9 9H2"/>
+            <path d="M12 7A1.5 1.5 0 1 1 13 8H2"/>
+          </svg>
+        );
+      }
+      
+      // Meditate icons
+      if (category === 'meditate') {
+        if (subcategory.toLowerCase().includes('guided')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="5" opacity=".6"/>
+            <circle cx="8" cy="8" r="2"/>
+          </svg>
+        );
+        if (subcategory.toLowerCase().includes('unguided')) return (
+          <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+            <circle cx="8" cy="8" r="6"/>
+            <circle cx="8" cy="8" r="2"/>
+          </svg>
+        );
+      }
+      
+      // Default icon
+      return (
+        <svg width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+          <circle cx="8" cy="8" r="6"/>
+          <path d="M7 9l1 1 3-3"/>
+        </svg>
+      );
+    };
+    
+    return subcategories?.map(subcategory => ({
+      id: subcategory.toLowerCase().replace(/\s+/g, '-'),
+      label: subcategory,
+      svg: getIconForSubcategory(subcategory, category)
+    })) || [];
+  };
   
   
-  // Update your options to hold an svg property
-  const musicDropdownOptions = {
-    focus: [
-      { id: 'deep-work', label: 'Deep Work', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <line x1="10" y1="1" x2="10" y2="19"/>
-          <line x1="1" y1="10" x2="19" y2="10"/>
-          <line x1="4" y1="4" x2="16" y2="16"/>
-          <line x1="4" y1="16" x2="16" y2="4"/>
-        </svg>
-      ) },
-      { id: 'motivation', label: 'Motivation', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <polyline points="8,1 12,9 9,9 12,19 7,13 11,13 8,1"/>
-        </svg>
-      ) },
-      { id: 'creativity', label: 'Creativity', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <rect x="4" y="9" width="12" height="7" rx="2"/>
-          <ellipse cx="10" cy="8" rx="5" ry="3"/>
-        </svg>
-      ) },
-      { id: 'learning', label: 'Learning', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <rect x="6" y="5" width="8" height="10" rx="1"/>
-          <line x1="6" y1="8" x2="14" y2="8"/>
-          <line x1="10" y1="5" x2="10" y2="15"/>
-        </svg>
-      ) },
-      { id: 'light-work', label: 'Light Work', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <line x1="15" y1="4" x2="10" y2="15"/>
-          <rect x="7" y="15" width="6" height="2" />
-          <rect x="12" y="3" width="4" height="3" rx="1.5" transform="rotate(30 12 3)"/>
-        </svg>
-      ) }
-    ],
-    relax: [
-      { id: 'chill', label: 'Chill', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <path d="M10 2v6m0 4v6m-4-8l4-4 4 4M6 14l4 4 4-4"/>
-        </svg>
-      ) },
-      { id: 'destress', label: 'Destress', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="8"/>
-          <path d="M14 8l-4 4-2-2"/>
-        </svg>
-      ) },
-      { id: 'recharge', label: 'Recharge', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <rect x="5" y="7" width="10" height="10" rx="1"/>
-          <path d="M8 7V5a1 1 0 011-1h2a1 1 0 011 1v2"/>
-        </svg>
-      ) },
-      { id: 'travel', label: 'Travel', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="8"/>
-          <path d="M2 10h16M10 2s3 3 3 8-3 8-3 8M10 2s-3 3-3 8 3 8 3 8"/>
-        </svg>
-      ) },
-      { id: 'unwind', label: 'Unwind', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0z"/>
-          <path d="M10 6v4l3 3"/>
-        </svg>
-      ) }
-    ],
-    sleep: [
-      { id: 'deep-sleep', label: 'Deep Sleep', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <path d="M17 10A7 7 0 1 1 10 3a5 5 0 0 0 7 7z"/>
-        </svg>
-      ) },
-      { id: 'guided-sleep', label: 'Guided Sleep', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="3"/>
-          <line x1="10" y1="3" x2="10" y2="5"/>
-          <line x1="10" y1="15" x2="10" y2="17"/>
-          <line x1="5" y1="5" x2="6.5" y2="6.5"/>
-          <line x1="13.5" y1="13.5" x2="15" y2="15"/>
-          <line x1="3" y1="10" x2="5" y2="10"/>
-          <line x1="15" y1="10" x2="17" y2="10"/>
-          <line x1="5" y1="15" x2="6.5" y2="13.5"/>
-          <line x1="13.5" y1="6.5" x2="15" y2="5"/>
-        </svg>
-      ) },
-      { id: 'power-nap', label: 'Power Nap', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <polyline points="8,1 12,9 9,9 12,19 7,13 11,13 8,1"/>
-        </svg>
-      ) },
-      { id: 'sleep-wake', label: 'Sleep and Wake', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="5"/>
-          <line x1="10" y1="3" x2="10" y2="5"/>
-          <line x1="10" y1="15" x2="10" y2="17"/>
-        </svg>
-      ) },
-      { id: 'wind-down', label: 'Wind Down', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <path d="M8 6A1.5 1.5 0 1 1 9 8H3"/>
-          <path d="M12 14A1.5 1.5 0 1 0 11 12H3"/>
-          <path d="M15 10A2 2 0 1 1 16 11H3"/>
-        </svg>
-      ) }
-    ],
-    meditate: [
-      { id: 'guided', label: 'Guided', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="6" opacity=".6"/>
-          <circle cx="10" cy="10" r="2"/>
-        </svg>
-      ) },
-      { id: 'unguided', label: 'Unguided', svg: (
-        <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
-          <circle cx="10" cy="10" r="7"/>
-          <circle cx="10" cy="10" r="3"/>
-        </svg>
-      ) }
-    ]
+  // Dynamic music dropdown options using useMemo
+  const musicDropdownOptions = useMemo(() => ({
+    focus: getDynamicOptions('focus'),
+    relax: getDynamicOptions('relax'), 
+    sleep: getDynamicOptions('sleep'),
+    meditate: getDynamicOptions('meditate')
+  }), [subcategories, selectedMusicMode]);
+
+
+  // Function to handle subcategory selection and play audio
+  const handleSubcategorySelect = (subcategory: string) => {
+    console.log('Dashboard: Selecting subcategory:', subcategory, 'for mode:', selectedMusicMode);
+    setSelectedSubcategory(subcategory);
+    setCurrentSongIndex(0); // Reset to first song in new subcategory
+    // AudioContext will handle auto-play via useEffect
   };
 
   // Songs playlist data structure
@@ -317,20 +370,6 @@ export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
   // Function to get filtered songs based on applied genres and neural effect
-  // Function to add recent session
-  const addRecentSession = (mode: string, activity: string) => {
-    const colors = ['bg-red-500', 'bg-pink-500', 'bg-blue-500', 'bg-purple-500', 'bg-green-500'];
-    const now = new Date();
-    const newSession = {
-      mode: 'Infinity',
-      activity,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      startTime: now,
-      timestamp: now
-    };
-    
-    setRecentSessions(prev => [newSession, ...prev.slice(0, 5)]); // Keep only 6 most recent
-  };
 
   // Function to calculate elapsed time from session start
   const getElapsedTime = (startTime: Date) => {
@@ -362,22 +401,21 @@ export const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Function to add recent track
-  const addRecentTrack = (song: any, mode: string) => {
-    const newTrack = {
-      title: song.title,
-      artist: song.artist,
-      genre: song.genre,
-      mode: mode.charAt(0).toUpperCase() + mode.slice(1),
-      timestamp: new Date()
-    };
-    
-    setRecentTracks(prev => {
-      // Remove if already exists to avoid duplicates
-      const filtered = prev.filter(track => track.title !== song.title);
-      return [newTrack, ...filtered.slice(0, 3)]; // Keep only 4 most recent
-    });
-  };
+  // Sync local option states with global selectedSubcategory
+  useEffect(() => {
+    if (selectedSubcategory && selectedMusicMode) {
+      if (selectedMusicMode === 'focus') {
+        setSelectedFocusOption(selectedSubcategory);
+      } else if (selectedMusicMode === 'relax') {
+        setSelectedRelaxOption(selectedSubcategory);
+      } else if (selectedMusicMode === 'sleep') {
+        setSelectedSleepOption(selectedSubcategory);
+      } else if (selectedMusicMode === 'meditate') {
+        setSelectedMeditateOption(selectedSubcategory);
+      }
+    }
+  }, [selectedSubcategory, selectedMusicMode]);
+
 
   const getFilteredSongs = (mode: 'focus' | 'relax' | 'sleep' | 'meditate') => {
     let songs = songsPlaylist[mode] || [];
@@ -646,191 +684,6 @@ export const Dashboard: React.FC = () => {
     };
   }, [user?.id]);
 
-  // Focus Music Player implementation
-  useEffect(() => {
-    class FocusMusicPlayer {
-      constructor() {
-        this.audioContext = null;
-        this.leftOscillator = null;
-        this.rightOscillator = null;
-        this.leftGain = null;
-        this.rightGain = null;
-        this.merger = null;
-        this.isPlaying = false;
-        this.currentMode = null;
-        this.currentVolume = 70; // Default volume
-        
-        this.focusModes = {
-          focus: { baseFreq: 200, beatFreq: 20, name: 'Focus' },
-          relax: { baseFreq: 180, beatFreq: 10, name: 'Relax' },
-          sleep: { baseFreq: 160, beatFreq: 6, name: 'Sleep' },
-          meditate: { baseFreq: 220, beatFreq: 8, name: 'Meditate' }
-        };
-
-        this.initializeEventListeners();
-      }
-
-      initializeEventListeners() {
-        // Focus mode cards
-        document.querySelectorAll('.focus-card').forEach(card => {
-          card.addEventListener('click', (e) => {
-            const mode = card.dataset.mode;
-            if (this.currentMode === mode && this.isPlaying) {
-              this.stop();
-            } else {
-              this.playMode(mode);
-            }
-          });
-        });
-      }
-
-      async initializeAudioContext() {
-        if (!this.audioContext) {
-          this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-          
-          if (this.audioContext.state === 'suspended') {
-            await this.audioContext.resume();
-          }
-        }
-      }
-
-      createBinauralBeat(baseFreq, beatFreq, volume) {
-        if (this.leftOscillator) this.stop();
-        
-        this.leftOscillator = this.audioContext.createOscillator();
-        this.rightOscillator = this.audioContext.createOscillator();
-        
-        this.leftGain = this.audioContext.createGain();
-        this.rightGain = this.audioContext.createGain();
-        
-        this.merger = this.audioContext.createChannelMerger(2);
-        
-        this.leftOscillator.frequency.setValueAtTime(
-          baseFreq - beatFreq/2, 
-          this.audioContext.currentTime
-        );
-        this.rightOscillator.frequency.setValueAtTime(
-          baseFreq + beatFreq/2, 
-          this.audioContext.currentTime
-        );
-        
-        this.leftOscillator.type = 'sine';
-        this.rightOscillator.type = 'sine';
-        
-        const actualVolume = volume / 100;
-        this.leftGain.gain.setValueAtTime(actualVolume, this.audioContext.currentTime);
-        this.rightGain.gain.setValueAtTime(actualVolume, this.audioContext.currentTime);
-        
-        this.leftOscillator.connect(this.leftGain);
-        this.rightOscillator.connect(this.rightGain);
-        
-        this.leftGain.connect(this.merger, 0, 0);
-        this.rightGain.connect(this.merger, 0, 1);
-        
-        this.merger.connect(this.audioContext.destination);
-      }
-
-      async playMode(mode) {
-        try {
-          await this.initializeAudioContext();
-          
-          const modeConfig = this.focusModes[mode];
-          const volume = 15; // Default volume
-          
-          this.createBinauralBeat(modeConfig.baseFreq, modeConfig.beatFreq, volume);
-          
-          this.leftOscillator.start();
-          this.rightOscillator.start();
-          
-          this.isPlaying = true;
-          this.currentMode = mode;
-          
-        } catch (error) {
-          console.error('Error starting audio:', error);
-        }
-      }
-
-      stop() {
-        if (this.isPlaying) {
-          if (this.leftOscillator) this.leftOscillator.stop();
-          if (this.rightOscillator) this.rightOscillator.stop();
-          
-          this.leftOscillator = null;
-          this.rightOscillator = null;
-          this.leftGain = null;
-          this.rightGain = null;
-          this.merger = null;
-          
-          this.isPlaying = false;
-          this.currentMode = null;
-        }
-      }
-
-      stopAll() {
-        this.stop();
-      }
-
-      // Real-time volume update method
-      updateVolume(volumePercent) {
-        if (this.leftGain && this.rightGain && this.audioContext) {
-          // Smooth volume transition - increased max volume for better audibility
-          const audioVolume = Math.max(0, Math.min(1, (volumePercent / 100) * 0.3));
-          const currentTime = this.audioContext.currentTime;
-          
-          try {
-            // Use exponentialRampToValueAtTime for smoother transitions
-            if (audioVolume > 0) {
-              this.leftGain.gain.exponentialRampToValueAtTime(audioVolume, currentTime + 0.05);
-              this.rightGain.gain.exponentialRampToValueAtTime(audioVolume, currentTime + 0.05);
-            } else {
-              // Handle zero volume case
-              this.leftGain.gain.linearRampToValueAtTime(0, currentTime + 0.05);
-              this.rightGain.gain.linearRampToValueAtTime(0, currentTime + 0.05);
-            }
-          } catch (e) {
-            // Fallback to immediate value setting
-            this.leftGain.gain.setValueAtTime(audioVolume, currentTime);
-            this.rightGain.gain.setValueAtTime(audioVolume, currentTime);
-          }
-          
-          // Store current volume for reference
-          this.currentVolume = volumePercent;
-        }
-      }
-      
-      // Get current volume
-      getCurrentVolume() {
-        return this.currentVolume || 70;
-      }
-    }
-
-    // Initialize the focus music player
-    const initPlayer = () => {
-      if (!window.focusPlayer) {
-        console.log('Initializing FocusMusicPlayer...');
-        window.focusPlayer = new FocusMusicPlayer();
-        console.log('FocusMusicPlayer initialized:', !!window.focusPlayer);
-        console.log('UpdateVolume method available:', !!window.focusPlayer.updateVolume);
-        
-        // Set initial volume
-        if (window.focusPlayer.updateVolume) {
-          window.focusPlayer.updateVolume(volume);
-          console.log('Initial volume set to:', volume);
-        }
-      }
-    };
-
-    // Initialize after a short delay to ensure DOM is ready
-    const timer = setTimeout(initPlayer, 100);
-
-    return () => {
-      clearTimeout(timer);
-      // Cleanup audio when component unmounts
-      if (window.focusPlayer && window.focusPlayer.isPlaying) {
-        window.focusPlayer.stop();
-      }
-    };
-  }, []); // Empty dependency array means this runs once when component mounts
 
   // Calculate task stats from real Supabase data
   const getTaskStats = () => {
@@ -855,16 +708,6 @@ export const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [isRunning, isPaused]);
 
-  // Music player timer effect
-  useEffect(() => {
-    if (!isPlaying) return;
-    
-    const interval = setInterval(() => {
-      setCurrentTime(prev => prev + 1);
-    }, 1000);
-    
-    return () => clearInterval(interval);
-  }, [isPlaying]);
 
   // Helper function to get week number
   const getWeekNumber = (date) => {
@@ -1086,10 +929,6 @@ export const Dashboard: React.FC = () => {
         setVolume(newVolume);
         lastKnownVolume = newVolume;
         
-        // Update focus player
-        if (window.focusPlayer && window.focusPlayer.updateVolume) {
-          window.focusPlayer.updateVolume(newVolume);
-        }
         
         // Update test audio element
         if (testAudioElement) {
@@ -1136,11 +975,6 @@ export const Dashboard: React.FC = () => {
         const percentage = (x / rect.width) * 100;
         const newVolume = Math.max(0, Math.min(100, percentage));
         setVolume(newVolume);
-        
-        // Real-time audio update during drag
-        if (window.focusPlayer && window.focusPlayer.updateVolume) {
-          window.focusPlayer.updateVolume(newVolume);
-        }
       }
     };
 
@@ -1159,24 +993,6 @@ export const Dashboard: React.FC = () => {
     };
   }, [isDraggingVolume]);
 
-  // Sync volume with audio player when state changes
-  useEffect(() => {
-    if (window.focusPlayer && isPlaying) {
-      console.log('Syncing volume on playback state change:', volume);
-      if (window.focusPlayer.updateVolume) {
-        window.focusPlayer.updateVolume(volume);
-      } else if (window.focusPlayer.leftGain && window.focusPlayer.rightGain) {
-        const audioVolume = Math.max(0, Math.min(1, (volume / 100) * 0.3));
-        try {
-          window.focusPlayer.leftGain.gain.setValueAtTime(audioVolume, window.focusPlayer.audioContext.currentTime);
-          window.focusPlayer.rightGain.gain.setValueAtTime(audioVolume, window.focusPlayer.audioContext.currentTime);
-          console.log('Volume synced via direct gain control:', audioVolume);
-        } catch (e) {
-          console.log('Error syncing volume:', e);
-        }
-      }
-    }
-  }, [isPlaying, volume]);
 
   // Song navigation functions
   const getCurrentSong = () => {
@@ -1188,24 +1004,13 @@ export const Dashboard: React.FC = () => {
     return playlist[currentSongIndex] || playlist[0];
   };
 
-  const nextSong = () => {
-    if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) return;
-    // Use filtered songs if genres are applied, otherwise use full playlist
-    const playlist = appliedGenres.length > 0 ? getFilteredSongs(selectedMusicMode) : songsPlaylist[selectedMusicMode];
-    setCurrentSongIndex((prevIndex) => (prevIndex + 1) % playlist.length);
-  };
 
-  const previousSong = () => {
-    if (!selectedMusicMode || !songsPlaylist[selectedMusicMode]) return;
-    // Use filtered songs if genres are applied, otherwise use full playlist
-    const playlist = appliedGenres.length > 0 ? getFilteredSongs(selectedMusicMode) : songsPlaylist[selectedMusicMode];
-    setCurrentSongIndex((prevIndex) => (prevIndex - 1 + playlist.length) % playlist.length);
-  };
-
-  // Reset song index when music mode changes
+  // Reset song index and timer when music mode changes
   useEffect(() => {
     setCurrentSongIndex(0);
+    setCurrentTime(0);
   }, [selectedMusicMode]);
+
 
   // Jump back animation effect
   useEffect(() => {
@@ -1825,13 +1630,16 @@ export const Dashboard: React.FC = () => {
               <div className="focus-grid-item">
                 <div className="focus-card" data-mode="focus" onClick={() => {
                   setSelectedMusicMode('focus');
+                  setSelectedSubcategory(null); // Reset subcategory when switching modes
                   setShowMusicPlayer(true);
-                  addRecentSession('Focus', 'Focus Session');
+                  // Recent session will be created automatically by AudioContext
                   setCurrentTime(0);
-                  if (window.focusPlayer) {
-                    window.focusPlayer.playMode('focus');
-                  }
-                  setIsPlaying(true);
+                  // Auto-play music after a short delay
+                  setTimeout(() => {
+                    if (audioFiles && audioFiles.length > 0) {
+                      playAudio();
+                    }
+                  }, 1000);
                 }}>
                   <h3 className="text-xl font-semibold">Focus</h3>
                   <div className="focus-card-image">
@@ -1846,13 +1654,16 @@ export const Dashboard: React.FC = () => {
               <div className="focus-grid-item">
                 <div className="focus-card" data-mode="relax" onClick={() => {
                   setSelectedMusicMode('relax');
+                  setSelectedSubcategory(null); // Reset subcategory when switching modes
                   setShowMusicPlayer(true);
-                  addRecentSession('Relax', 'Relaxation Session');
+                  // Recent session will be created automatically by AudioContext
                   setCurrentTime(0);
-                  if (window.focusPlayer) {
-                    window.focusPlayer.playMode('relax');
-                  }
-                  setIsPlaying(true);
+                  // Auto-play music after a short delay
+                  setTimeout(() => {
+                    if (audioFiles && audioFiles.length > 0) {
+                      playAudio();
+                    }
+                  }, 1000);
                 }}>
                   <h3 className="text-xl font-semibold">Relax</h3>
                   <div className="focus-card-image">
@@ -1867,13 +1678,16 @@ export const Dashboard: React.FC = () => {
               <div className="focus-grid-item">
                 <div className="focus-card" data-mode="sleep" onClick={() => {
                   setSelectedMusicMode('sleep');
+                  setSelectedSubcategory(null); // Reset subcategory when switching modes
                   setShowMusicPlayer(true);
-                  addRecentSession('Sleep', 'Sleep Session');
+                  // Recent session will be created automatically by AudioContext
                   setCurrentTime(0);
-                  if (window.focusPlayer) {
-                    window.focusPlayer.playMode('sleep');
-                  }
-                  setIsPlaying(true);
+                  // Auto-play music after a short delay
+                  setTimeout(() => {
+                    if (audioFiles && audioFiles.length > 0) {
+                      playAudio();
+                    }
+                  }, 1000);
                 }}>
                   <h3 className="text-xl font-semibold">Sleep</h3>
                   <div className="focus-card-image">
@@ -1888,13 +1702,16 @@ export const Dashboard: React.FC = () => {
               <div className="focus-grid-item">
                 <div className="focus-card" data-mode="meditate" onClick={() => {
                   setSelectedMusicMode('meditate');
+                  setSelectedSubcategory(null); // Reset subcategory when switching modes
                   setShowMusicPlayer(true);
-                  addRecentSession('Meditate', 'Meditation Session');
+                  // Recent session will be created automatically by AudioContext
                   setCurrentTime(0);
-                  if (window.focusPlayer) {
-                    window.focusPlayer.playMode('meditate');
-                  }
-                  setIsPlaying(true);
+                  // Auto-play music after a short delay
+                  setTimeout(() => {
+                    if (audioFiles && audioFiles.length > 0) {
+                      playAudio();
+                    }
+                  }, 1000);
                 }}>
                   <h3 className="text-xl font-semibold">Meditate</h3>
                   <div className="focus-card-image">
@@ -1965,6 +1782,7 @@ export const Dashboard: React.FC = () => {
                             setTimeout(() => {
                               setShowJumpBackView(false);
                               setSelectedMusicMode('focus');
+                              setSelectedSubcategory(null); // Reset subcategory when switching modes
                               setShowMusicPlayer(true);
                             }, 150);
                           }}
@@ -1998,6 +1816,7 @@ export const Dashboard: React.FC = () => {
                             setTimeout(() => {
                               setShowJumpBackView(false);
                               setSelectedMusicMode('focus');
+                              setSelectedSubcategory(null); // Reset subcategory when switching modes
                               setShowMusicPlayer(true);
                             }, 150);
                           }}
@@ -2067,14 +1886,9 @@ export const Dashboard: React.FC = () => {
                         e.preventDefault();
                         console.log('Back button clicked'); // Debug log
                         setShowMusicPlayer(false);
-                        setSelectedMusicMode(null);
-                        setIsPlaying(false);
-                        setCurrentTime(0);
+                        // Keep music playing and selected mode/subcategory when going back
                         setShowActivityView(false);
                         setSelectedActivity(null);
-                        if (window.focusPlayer) {
-                          window.focusPlayer.stop();
-                        }
                       }}
                       className="music-back-button"
                     >
@@ -2093,16 +1907,18 @@ export const Dashboard: React.FC = () => {
                         }}
                         className="flex items-center gap-2 bg-black/20 backdrop-blur-sm rounded-full px-3 py-1 hover:bg-black/30 transition-all duration-200 cursor-pointer relative z-10"
                       >
-                        <span className="w-5 h-5 flex items-center justify-center">
+                        <span className="w-6 h-6 flex items-center justify-center flex-shrink-0">
                           {(() => {
                             const currentOptions = selectedMusicMode === 'relax' ? musicDropdownOptions.relax : 
                                                   selectedMusicMode === 'sleep' ? musicDropdownOptions.sleep :
                                                   selectedMusicMode === 'meditate' ? musicDropdownOptions.meditate :
                                                   musicDropdownOptions.focus;
-                            const selectedOption = selectedMusicMode === 'relax' ? selectedRelaxOption :
-                                                 selectedMusicMode === 'sleep' ? selectedSleepOption :
-                                                 selectedMusicMode === 'meditate' ? selectedMeditateOption :
-                                                 selectedFocusOption;
+                            const selectedOption = selectedSubcategory || (
+                              selectedMusicMode === 'relax' ? selectedRelaxOption :
+                              selectedMusicMode === 'sleep' ? selectedSleepOption :
+                              selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                              selectedFocusOption
+                            );
                             const currentOption = currentOptions.find(opt => opt.label === selectedOption);
                             return currentOption?.svg || (
                               <svg width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2">
@@ -2114,10 +1930,12 @@ export const Dashboard: React.FC = () => {
                             );
                           })()}
                         </span>
-                        <span className="text-sm font-medium">{selectedMusicMode === 'relax' ? selectedRelaxOption :
-                                                                selectedMusicMode === 'sleep' ? selectedSleepOption :
-                                                                selectedMusicMode === 'meditate' ? selectedMeditateOption :
-                                                                selectedFocusOption}</span>
+                        <span className="text-sm font-medium">{selectedSubcategory || (
+                          selectedMusicMode === 'relax' ? selectedRelaxOption :
+                          selectedMusicMode === 'sleep' ? selectedSleepOption :
+                          selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                          selectedFocusOption
+                        )}</span>
                         <svg 
                           className={`w-3 h-3 transition-transform duration-200 ${showFocusDropdown ? 'rotate-180' : ''}`} 
                           fill="none" 
@@ -2150,6 +1968,11 @@ export const Dashboard: React.FC = () => {
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
+                                    
+                                    // Close dropdown first
+                                    setShowFocusDropdown(false);
+                                    
+                                    // Update local states
                                     if (selectedMusicMode === 'relax') {
                                       setSelectedRelaxOption(option.label);
                                     } else if (selectedMusicMode === 'sleep') {
@@ -2159,23 +1982,31 @@ export const Dashboard: React.FC = () => {
                                     } else {
                                       setSelectedFocusOption(option.label);
                                     }
-                                    setShowFocusDropdown(false);
+                                    
+                                    // Handle subcategory selection and play audio with slight delay
+                                    setTimeout(() => {
+                                      handleSubcategorySelect(option.label);
+                                    }, 50);
                                   }}
                                   className={`w-full flex items-center gap-2 px-2.5 py-2 text-left rounded-md transition-all duration-200 text-white ${
-                                    (selectedMusicMode === 'relax' ? selectedRelaxOption :
-                                     selectedMusicMode === 'sleep' ? selectedSleepOption :
-                                     selectedMusicMode === 'meditate' ? selectedMeditateOption :
-                                     selectedFocusOption) === option.label 
+                                    (selectedSubcategory || (
+                                      selectedMusicMode === 'relax' ? selectedRelaxOption :
+                                      selectedMusicMode === 'sleep' ? selectedSleepOption :
+                                      selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                                      selectedFocusOption
+                                    )) === option.label 
                                       ? 'bg-white/20 shadow-sm' 
                                       : 'hover:bg-white/10'
                                   }`}
                                 >
                                   <span className="w-6 h-6 flex items-center justify-center">{option.svg}</span>
                                   <span className="text-sm font-medium flex-1">{option.label}</span>
-                                  {(selectedMusicMode === 'relax' ? selectedRelaxOption :
-                                   selectedMusicMode === 'sleep' ? selectedSleepOption :
-                                   selectedMusicMode === 'meditate' ? selectedMeditateOption :
-                                   selectedFocusOption) === option.label && (
+                                  {(selectedSubcategory || (
+                                    selectedMusicMode === 'relax' ? selectedRelaxOption :
+                                    selectedMusicMode === 'sleep' ? selectedSleepOption :
+                                    selectedMusicMode === 'meditate' ? selectedMeditateOption :
+                                    selectedFocusOption
+                                  )) === option.label && (
                                     <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                     </svg>
@@ -2219,17 +2050,20 @@ export const Dashboard: React.FC = () => {
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
                   <div className="text-sm font-medium mb-3 uppercase tracking-wider opacity-80">
                     {isTimerHovered && selectedMusicMode === 'focus' ? 'CLICK TO TOGGLE TIMER SETTINGS'
+                     : audioLoading ? 'LOADING...'
+                     : !audioFiles || audioFiles.length === 0 ? 'NO SONGS AVAILABLE'
                      : selectedMusicMode === 'focus' ? 'INCREASING FOCUS...' 
                      : selectedMusicMode === 'relax' ? 'RELAXING...'
                      : selectedMusicMode === 'sleep' ? 'SLEEPING...'
                      : 'MEDITATING...'}
                   </div>
                   <div 
-                    className="text-7xl font-light mb-4"
+                    className="text-7xl font-light mb-4 tabular-nums text-center"
+                    style={{ minWidth: '280px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
                     onMouseEnter={() => setIsTimerHovered(true)}
                     onMouseLeave={() => setIsTimerHovered(false)}
                   >
-                    {Math.floor(currentTime / 60)}:{(currentTime % 60).toString().padStart(2, '0')}
+                    {Math.floor(sessionTime / 60)}:{(sessionTime % 60).toString().padStart(2, '0')}
                   </div>
                   
                   {/* Infinite Play Dropdown */}
@@ -2261,19 +2095,19 @@ export const Dashboard: React.FC = () => {
                     <button
                       onClick={() => {
                         if (isPlaying) {
-                          setIsPlaying(false);
-                          if (window.focusPlayer) {
-                            window.focusPlayer.stop();
-                          }
+                          pauseAudio();
                         } else {
-                          setIsPlaying(true);
+                          playAudio();
                           // Track the current song when playing
-                          const currentSong = getCurrentSong();
-                          if (currentSong && selectedMusicMode) {
-                            addRecentTrack(currentSong, selectedMusicMode);
-                          }
-                          if (window.focusPlayer) {
-                            window.focusPlayer.playMode(selectedMusicMode);
+                          if (audioFiles && audioFiles[currentSongIndex] && selectedMusicMode) {
+                            const currentAudioFile = audioFiles[currentSongIndex];
+                            // Create a song object in the expected format
+                            const songForTracking = {
+                              title: currentAudioFile.subcategory || 'Unknown Track',
+                              artist: currentAudioFile.category || 'Unknown Artist',
+                              genre: currentAudioFile.category || 'Unknown Genre'
+                            };
+                            addRecentTrack(songForTracking, selectedMusicMode);
                           }
                         }
                       }}
@@ -2307,20 +2141,19 @@ export const Dashboard: React.FC = () => {
                     <div className="w-10 h-10 rounded-lg overflow-hidden">
                       <div className={`w-full h-full bg-gradient-to-br ${getCurrentSong()?.gradient || 'from-blue-500 via-purple-600 to-pink-500'} flex items-center justify-center`}>
                         <div className="text-white text-xs font-bold">
-                          {getCurrentSong()?.initials || 'BL'}
+                          {currentTrack?.title?.substring(0, 2).toUpperCase() || 
+                           (selectedMusicMode?.substring(0, 2).toUpperCase() || 'NA')}
                         </div>
                       </div>
                     </div>
                     <div className="text-white">
                       <h4 className="font-medium text-xs">
-                        {getCurrentSong()?.title || 'Black Lights'}
+                        {currentTrack?.title || (selectedMusicMode ? `${selectedMusicMode}` : 'No Song Playing')}
                       </h4>
                       <div className="flex items-center gap-1 text-xs text-gray-300 mt-0.5">
                         <span className="bg-white bg-opacity-20 px-1.5 py-0.5 rounded text-xs">
-                          {appliedNeuralEffect.charAt(0).toUpperCase() + appliedNeuralEffect.slice(1)} Neural Effect
+                          {currentTrack?.genre?.toUpperCase() || (selectedMusicMode?.toUpperCase() || 'MUSIC')}
                         </span>
-                        <span>{getCurrentSong()?.genre || 'ELECTRONIC'}</span>
-                        <span>DETAILS</span>
                       </div>
                     </div>
                   </div>
@@ -3054,9 +2887,6 @@ export const Dashboard: React.FC = () => {
                     onClick={() => {
                       if (selectedActivity) {
                         // Start the music with selected activity
-                        if (window.focusPlayer) {
-                          window.focusPlayer.playMode(selectedMusicMode);
-                        }
                         setShowActivityView(false);
                         setSelectedActivity(null);
                       }
@@ -3564,9 +3394,6 @@ export const Dashboard: React.FC = () => {
                   onClick={() => {
                     if (selectedActivity) {
                       // Start the music with selected activity
-                      if (window.focusPlayer) {
-                        window.focusPlayer.playMode(selectedMusicMode);
-                      }
                       setShowMusicModal(false);
                       setSelectedActivity(null);
                     }

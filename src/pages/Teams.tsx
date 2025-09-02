@@ -163,29 +163,41 @@ export const Teams: React.FC = () => {
 
       console.log('✅ Team code saved to database:', data)
 
-      // Auto-add the admin as a team member
-      const { data: adminMember, error: adminError } = await supabase
+      // Check if admin is already a team member (prevent duplicates)
+      const { data: existingAdmin } = await supabase
         .from('team_members')
-        .insert({
-          user_id: user.id,
-          team_invite_id: data.id,
-          role: 'admin',
-          status: 'active',
-          permissions: {
-            can_invite: true,
-            can_manage_tasks: true,
-            can_view_analytics: true,
-            can_edit_team: true,
-            can_remove_members: true
-          }
-        })
-        .select()
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('team_invite_id', data.id)
         .single()
 
-      if (adminError) {
-        console.warn('⚠️ Failed to add admin as team member:', adminError)
+      if (!existingAdmin) {
+        // Auto-add the admin as a team member only if not already added
+        const { data: adminMember, error: adminError } = await supabase
+          .from('team_members')
+          .insert({
+            user_id: user.id,
+            team_invite_id: data.id,
+            role: 'admin',
+            status: 'active',
+            permissions: {
+              can_invite: true,
+              can_manage_tasks: true,
+              can_view_analytics: true,
+              can_edit_team: true,
+              can_remove_members: true
+            }
+          })
+          .select()
+          .single()
+
+        if (adminError) {
+          console.warn('⚠️ Failed to add admin as team member:', adminError)
+        } else {
+          console.log('✅ Admin added as team member:', adminMember)
+        }
       } else {
-        console.log('✅ Admin added as team member:', adminMember)
+        console.log('ℹ️ Admin already exists as team member, skipping duplicate')
       }
 
       // Update state
@@ -282,8 +294,13 @@ export const Teams: React.FC = () => {
           profiles: profileMap.get(member.user_id) || null
         }))
 
-        console.log('✅ Loaded team members with profiles:', membersWithProfiles)
-        setTeamMembers(membersWithProfiles)
+        // Remove duplicates based on user_id (same user appearing multiple times)
+        const uniqueMembers = membersWithProfiles.filter((member, index, array) => 
+          array.findIndex(m => m.user_id === member.user_id) === index
+        )
+
+        console.log('✅ Loaded team members with profiles (duplicates removed):', uniqueMembers)
+        setTeamMembers(uniqueMembers)
       } else {
         console.log('No team members found')
         setTeamMembers([])

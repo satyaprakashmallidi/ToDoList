@@ -5,6 +5,7 @@ import { TimeStoreProvider } from './contexts/TimeStore'
 import { TaskStoreProvider } from './contexts/TaskStore'
 import { NotificationProvider } from './contexts/NotificationContext'
 import { DraftProvider } from './contexts/DraftContext'
+import { AudioContextProvider } from './contexts/AudioContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar } from './components/Sidebar'
@@ -140,10 +141,11 @@ function App() {
       <AuthProvider>
         <NotificationProvider>
           <DraftProvider>
-            <TimeStoreProvider>
-              <TaskStoreProvider>
-                <Router>
-              <Routes>
+            <AudioContextProvider>
+              <TimeStoreProvider>
+                <TaskStoreProvider>
+                  <Router>
+                    <Routes>
                 <Route path="/login" element={
                   <PublicRoute>
                     <Login />
@@ -177,12 +179,13 @@ function App() {
                   </PublicRoute>
                 } />
                 <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </Router>
-          </TaskStoreProvider>
-        </TimeStoreProvider>
-      </DraftProvider>
-      </NotificationProvider>
+                    </Routes>
+                  </Router>
+                </TaskStoreProvider>
+              </TimeStoreProvider>
+            </AudioContextProvider>
+          </DraftProvider>
+        </NotificationProvider>
       </AuthProvider>
     </ErrorBoundary>
   )
