@@ -456,7 +456,8 @@ export const Chat: React.FC = () => {
   // Transform direct conversations to direct messages format
   console.log('🔍 Debug directConversations:', directConversations);
   
-  const availableDirectMessages: DirectMessage[] = directConversations
+  // Get users from existing conversations
+  const conversationUsers: DirectMessage[] = directConversations
     .map(conversation => {
       console.log('🔍 Processing conversation:', conversation);
       
@@ -478,6 +479,27 @@ export const Chat: React.FC = () => {
     })
     .filter(dm => dm.id !== user?.id); // Extra safety to exclude current user
 
+  // Get team members who don't have existing conversations
+  const teamMemberDirectMessages: DirectMessage[] = teamMembers
+    .filter(member => 
+      member.id !== user?.id && // Exclude current user
+      !conversationUsers.some(convUser => convUser.id === member.id) // Exclude users with existing conversations
+    )
+    .map(member => ({
+      id: member.id,
+      name: member.name || member.email || 'Unknown User',
+      status: getMemberStatus(member.id) as 'online' | 'offline',
+      avatar: member.avatar || '',
+      lastMessage: '',
+      unread: false
+    }));
+
+  // Combine both conversation users and team members
+  const availableDirectMessages: DirectMessage[] = [...conversationUsers, ...teamMemberDirectMessages];
+
+  console.log('👥 Team members loaded:', teamMembers.length, teamMembers.map(tm => tm.name));
+  console.log('💬 Conversation users:', conversationUsers.length, conversationUsers.map(cu => cu.name));
+  console.log('🆕 Team member direct messages:', teamMemberDirectMessages.length, teamMemberDirectMessages.map(tmdm => tmdm.name));
   console.log('📱 Available direct messages:', availableDirectMessages.length, availableDirectMessages.map(dm => dm.name));
 
   // Current user is excluded from direct messages list
