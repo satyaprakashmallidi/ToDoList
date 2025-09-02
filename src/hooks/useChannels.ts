@@ -686,22 +686,44 @@ export function useChannels() {
   }, [user, supabase]);
 
   // Send direct message
-  const sendDirectMessage = useCallback(async (otherUserId: string, content: string) => {
-    if (!user || !content.trim()) return false;
+  const sendDirectMessage = useCallback(async (
+    otherUserId: string, 
+    content: string,
+    messageType: string = 'text',
+    fileUrl?: string,
+    fileName?: string,
+    fileSize?: number
+  ) => {
+    if (!user) return false;
+    
+    // For text messages, content must not be empty
+    if (messageType === 'text' && !content.trim()) return false;
+    // For file messages, fileUrl must exist
+    if (messageType === 'file' && !fileUrl) return false;
 
     try {
       const conversationId = await getOrCreateDirectConversation(otherUserId);
       if (!conversationId) return false;
 
+      // Prepare message data based on type
+      const messageData: any = {
+        conversation_id: conversationId,
+        sender_id: user.id,
+        content: content.trim() || fileName || 'File',
+        message_type: messageType
+      };
+
+      // Add file-specific fields if it's a file message
+      if (messageType === 'file' && fileUrl) {
+        messageData.file_url = fileUrl;
+        messageData.file_name = fileName;
+        messageData.file_size = fileSize;
+      }
+
       // Use dedicated direct_messages table
       const { error } = await supabase
         .from('direct_messages')
-        .insert({
-          conversation_id: conversationId,
-          sender_id: user.id,
-          content: content.trim(),
-          message_type: 'text'
-        });
+        .insert(messageData);
 
       if (error) {
         console.error('Error sending direct message:', error);
@@ -727,6 +749,9 @@ export function useChannels() {
           sender_id,
           content,
           message_type,
+          file_url,
+          file_name,
+          file_size,
           created_at,
           updated_at,
           is_edited,

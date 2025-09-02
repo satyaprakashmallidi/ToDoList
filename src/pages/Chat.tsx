@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import EmojiPicker from 'emoji-picker-react';
 import { 
   Hash, 
   ChevronDown, 
@@ -39,7 +40,9 @@ import {
   Laugh,
   Frown,
   Angry,
-  ThumbsUp
+  ThumbsUp,
+  Download,
+  ChevronDown as ScrollDown
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChannels } from '../hooks/useChannels';
@@ -169,6 +172,31 @@ export const Chat: React.FC = () => {
   // Activity state
   const [activityTab, setActivityTab] = useState<'mentions' | 'reactions' | 'assigned'>('mentions');
   const [activityReactions, setActivityReactions] = useState<any[]>([]);
+
+  // Video/Audio Call state
+  const [showVideoCallModal, setShowVideoCallModal] = useState(false);
+  const [mediaPermissions, setMediaPermissions] = useState({
+    camera: false,
+    microphone: false,
+    requested: false
+  });
+  const [permissionsDenied, setPermissionsDenied] = useState(false);
+  const [currentStream, setCurrentStream] = useState<MediaStream | null>(null);
+  const [callType, setCallType] = useState<'video' | 'audio'>('video');
+
+  // File sharing state
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [showFilePreview, setShowFilePreview] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  
+  // Emoji picker state
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiPickerPosition, setEmojiPickerPosition] = useState({ top: 0, left: 0 });
+  
+  // Scroll state
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // Sidebar items for replies section
   const sidebarItems: SidebarItem[] = [
@@ -1165,6 +1193,18 @@ export const Chat: React.FC = () => {
     };
   }, [selectedChannel, channelPosts, activeSidebarItem, activityTab]);
 
+  // Cleanup media stream when component unmounts or modal closes
+  useEffect(() => {
+    return () => {
+      stopMediaStream();
+    };
+  }, []);
+
+  // Check initial media permissions
+  useEffect(() => {
+    checkMediaPermissions();
+  }, []);
+
   const handleSendMessage = async () => {
     if (!messageInput.trim()) return;
 
@@ -1193,6 +1233,603 @@ export const Chat: React.FC = () => {
       case 'offline': 
       default: return 'bg-gray-400';
     }
+  };
+
+  // Media permission functions
+  const requestMediaPermissions = async (type: 'video' | 'audio' = 'video'): Promise<{
+    success: boolean;
+    audioOnly?: boolean;
+    error?: string;
+  }> => {
+    try {
+      setMediaPermissions(prev => ({ ...prev, requested: true }));
+
+      const constraints = type === 'video' 
+        ? { video: true, audio: true }
+        : { video: false, audio: true };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      // Check what permissions were actually granted
+      const tracks = stream.getTracks();
+      const hasVideo = tracks.some(track => track.kind === 'video');
+      const hasAudio = tracks.some(track => track.kind === 'audio');
+
+      setCurrentStream(stream);
+      setMediaPermissions({
+        camera: hasVideo,
+        microphone: hasAudio,
+        requested: true
+      });
+      setPermissionsDenied(false);
+
+      return {
+        success: true,
+        audioOnly: !hasVideo && hasAudio
+      };
+    } catch (error: any) {
+      console.error('Media permission error:', error);
+      setPermissionsDenied(true);
+      setMediaPermissions(prev => ({ ...prev, requested: true }));
+      
+      return {
+        success: false,
+        error: error.name === 'NotAllowedError' 
+          ? 'Permission denied. Please allow camera/microphone access and try again.'
+          : `Failed to access media devices: ${error.message}`
+      };
+    }
+  };
+
+  const stopMediaStream = () => {
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => {
+        track.stop();
+      });
+      setCurrentStream(null);
+      setMediaPermissions({
+        camera: false,
+        microphone: false,
+        requested: false
+      });
+    }
+  };
+
+  const handleVideoCall = async () => {
+    if (!selectedDM) return;
+    
+    setCallType('video');
+    setShowVideoCallModal(true);
+    
+    // Auto-request permissions when modal opens
+    await requestMediaPermissions('video');
+  };
+
+  const handleAudioCall = async () => {
+    if (!selectedDM) return;
+    
+    setCallType('audio');
+    setShowVideoCallModal(true);
+    
+    // Auto-request permissions when modal opens
+    await requestMediaPermissions('audio');
+  };
+
+  const checkMediaPermissions = async () => {
+    try {
+      const permissions = await navigator.permissions.query({ name: 'camera' as PermissionName });
+      const micPermissions = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+      
+      setMediaPermissions(prev => ({
+        ...prev,
+        camera: permissions.state === 'granted',
+        microphone: micPermissions.state === 'granted'
+      }));
+    } catch (error) {
+      console.log('Permission API not supported');
+    }
+  };
+
+  // File handling functions
+  const getFileIcon = (fileType: string): JSX.Element => {
+    if (fileType.startsWith('image/')) return <Image className="w-8 h-8 text-green-500" />;
+    if (fileType.startsWith('video/')) return <Video className="w-8 h-8 text-red-500" />;
+    if (fileType.startsWith('audio/')) return <Mic className="w-8 h-8 text-blue-500" />;
+    if (fileType.includes('pdf')) return <FileText className="w-8 h-8 text-red-600" />;
+    if (fileType.includes('document') || fileType.includes('msword') || fileType.includes('wordprocessingml')) 
+      return <FileText className="w-8 h-8 text-blue-600" />;
+    if (fileType.includes('sheet') || fileType.includes('excel') || fileType.includes('csv')) 
+      return <FileText className="w-8 h-8 text-green-600" />;
+    if (fileType.includes('json')) return <Code className="w-8 h-8 text-purple-500" />;
+    return <Paperclip className="w-8 h-8 text-gray-500" />;
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files) {
+      const fileArray = Array.from(files);
+      setSelectedFiles(fileArray);
+      setShowFilePreview(true);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    
+    const files = e.dataTransfer.files;
+    if (files) {
+      const fileArray = Array.from(files);
+      setSelectedFiles(fileArray);
+      setShowFilePreview(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+  };
+
+  const uploadFiles = async (): Promise<string[]> => {
+    if (selectedFiles.length === 0) return [];
+    
+    setUploadingFiles(true);
+    const uploadedUrls: string[] = [];
+    
+    try {
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+
+      for (const file of selectedFiles) {
+        // Create a unique filename with user ID folder structure
+        const timestamp = Date.now();
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${timestamp}-${file.name}`;
+        const filePath = `${user.id}/${fileName}`;
+        
+        // Upload to Supabase Storage
+        const { data, error } = await supabase.storage
+          .from('chat-files')
+          .upload(filePath, file, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (error) {
+          console.error('Error uploading file:', error);
+          // If bucket doesn't exist, fall back to blob URL temporarily
+          if (error.message.includes('bucket') || error.message.includes('not found')) {
+            console.warn('Storage bucket not configured. Please create "chat-files" bucket in Supabase.');
+            const blobUrl = URL.createObjectURL(file);
+            uploadedUrls.push(blobUrl);
+          }
+          continue;
+        }
+
+        // Get public URL for the uploaded file
+        const { data: { publicUrl } } = supabase.storage
+          .from('chat-files')
+          .getPublicUrl(filePath);
+        
+        uploadedUrls.push(publicUrl);
+      }
+      
+      return uploadedUrls;
+    } catch (error) {
+      console.error('File upload error:', error);
+      // Fallback to blob URLs if Supabase storage fails
+      for (const file of selectedFiles) {
+        const blobUrl = URL.createObjectURL(file);
+        uploadedUrls.push(blobUrl);
+      }
+      return uploadedUrls;
+    } finally {
+      setUploadingFiles(false);
+    }
+  };
+
+  // Emoji picker functions
+  const handleEmojiClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setEmojiPickerPosition({
+      top: rect.top - 350, // Position above the button
+      left: rect.left
+    });
+    setShowEmojiPicker(!showEmojiPicker);
+  };
+
+  const onEmojiSelect = (emojiData: any) => {
+    setMessageInput(prev => prev + emojiData.emoji);
+    setShowEmojiPicker(false);
+  };
+
+  // Close emoji picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showEmojiPicker && !(event.target as Element).closest('.emoji-picker-container')) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEmojiPicker]);
+
+  // Handle scroll detection for scroll-to-bottom button
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isAtBottom = scrollHeight - scrollTop <= clientHeight + 100; // 100px threshold
+      setShowScrollToBottom(!isAtBottom);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [currentMessages]);
+
+  // Manual scroll to bottom function
+  const scrollToBottomManual = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setShowScrollToBottom(false);
+  };
+
+  const sendFilesMessage = async () => {
+    if (selectedFiles.length === 0) return;
+    
+    try {
+      const uploadedUrls = await uploadFiles();
+      
+      if (uploadedUrls.length === 0) {
+        console.error('No files were uploaded successfully');
+        return;
+      }
+      
+      console.log(`Sending ${selectedFiles.length} files to conversation`);
+      
+      // Send each file as a separate message
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        const fileUrl = uploadedUrls[i];
+        
+        if (selectedChannel) {
+          // For channels, keep the old JSON format for now
+          const messageContent = JSON.stringify({
+            type: 'file',
+            files: [{
+              type: 'file',
+              fileName: file.name,
+              fileSize: file.size,
+              fileType: file.type,
+              fileUrl: fileUrl
+            }]
+          });
+          console.log(`Sending file to channel: ${file.name}`);
+          await sendChannelMessage(selectedChannel.id, messageContent);
+        } else if (selectedDM && currentConversationId) {
+          // For direct messages, use new database schema
+          console.log(`Sending file to DM conversation ${currentConversationId}: ${file.name}`);
+          const success = await sendDirectMessage(
+            selectedDM, 
+            '', // empty content, filename will be used
+            'file',
+            fileUrl,
+            file.name,
+            file.size
+          );
+          
+          if (!success) {
+            console.error(`Failed to send file: ${file.name}`);
+          }
+        } else {
+          console.error('No conversation selected for file upload');
+        }
+      }
+      
+      // Reload messages to show the new files
+      if (currentConversationId) {
+        console.log(`Reloading messages for conversation: ${currentConversationId}`);
+        await loadDirectMessages(currentConversationId);
+      }
+      
+      // Clear selected files
+      setSelectedFiles([]);
+      setShowFilePreview(false);
+      
+      console.log('Files sent successfully!');
+    } catch (error) {
+      console.error('Error sending files:', error);
+    }
+  };
+
+  // Helper function to render file from database schema
+  const renderFileFromDB = (message: any): JSX.Element => {
+    if (!message.file_url || !message.file_name) return <span>File</span>;
+
+    const fileType = message.file_name.split('.').pop()?.toLowerCase() || '';
+    const getMimeType = (extension: string): string => {
+      const mimeTypes: Record<string, string> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+        mp4: 'video/mp4', mov: 'video/mov', avi: 'video/avi', mkv: 'video/mkv',
+        mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg'
+      };
+      return mimeTypes[extension] || 'application/octet-stream';
+    };
+    
+    const mimeType = getMimeType(fileType);
+
+    return (
+      <div className="max-w-sm">
+        {/* Image files with preview */}
+        {mimeType.startsWith('image/') ? (
+          <div className="bg-gray-50 rounded-lg border p-2">
+            <img
+              src={message.file_url}
+              alt={message.file_name}
+              className="w-full h-48 object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+              onClick={() => window.open(message.file_url, '_blank')}
+            />
+            <div className="flex items-center justify-between mt-2 px-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-gray-900 truncate">
+                  {message.file_name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {formatFileSize(message.file_size || 0)}
+                </p>
+              </div>
+              <a
+                href={message.file_url}
+                download={message.file_name}
+                className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                title="Download image"
+              >
+                <Download className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+        ) : mimeType.startsWith('video/') ? (
+          /* Video files with preview */
+          <div className="bg-gray-50 rounded-lg border p-2">
+            <video
+              src={message.file_url}
+              className="w-full h-48 object-cover rounded-lg"
+              controls
+            />
+            <div className="flex items-center justify-between mt-2 px-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-gray-900 truncate">
+                  {message.file_name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {formatFileSize(message.file_size || 0)}
+                </p>
+              </div>
+              <a
+                href={message.file_url}
+                download={message.file_name}
+                className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                title="Download video"
+              >
+                <Download className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+        ) : mimeType.startsWith('audio/') ? (
+          /* Audio files with player */
+          <div className="bg-gray-50 rounded-lg border p-3">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-purple-100 rounded-lg">
+                <Download className="w-6 h-6 text-purple-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {message.file_name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {formatFileSize(message.file_size || 0)}
+                </p>
+              </div>
+              <a
+                href={message.file_url}
+                download={message.file_name}
+                className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                title="Download audio"
+              >
+                <Download className="w-4 h-4" />
+              </a>
+            </div>
+            <audio
+              src={message.file_url}
+              className="w-full mt-2"
+              controls
+            />
+          </div>
+        ) : (
+          /* Other files with icon and download */
+          <div className="bg-gray-50 rounded-lg border p-3">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-gray-100 rounded-lg">
+                {getFileIcon(mimeType)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {message.file_name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {formatFileSize(message.file_size || 0)}
+                </p>
+              </div>
+              <a
+                href={message.file_url}
+                download={message.file_name}
+                className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                title={`Download ${message.file_name}`}
+              >
+                <Download className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderFileMessage = (content: string): JSX.Element | string => {
+    try {
+      const parsed = JSON.parse(content);
+      
+      if (parsed.type === 'file' && parsed.files) {
+        return (
+          <div className="space-y-3">
+            {parsed.files.map((file: any, index: number) => (
+              <div key={index} className="max-w-sm">
+                {/* Image files with preview */}
+                {file.fileType.startsWith('image/') ? (
+                  <div className="bg-gray-50 rounded-lg border p-2">
+                    <img
+                      src={file.fileUrl}
+                      alt={file.fileName}
+                      className="w-full h-48 object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => window.open(file.fileUrl, '_blank')}
+                    />
+                    <div className="flex items-center justify-between mt-2 px-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-900 truncate">
+                          {file.fileName}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {formatFileSize(file.fileSize)}
+                        </p>
+                      </div>
+                      <a
+                        href={file.fileUrl}
+                        download={file.fileName}
+                        className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                        title="Download image"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                ) : file.fileType.startsWith('video/') ? (
+                  /* Video files with preview */
+                  <div className="bg-gray-50 rounded-lg border p-2">
+                    <video
+                      src={file.fileUrl}
+                      className="w-full h-48 object-cover rounded-lg"
+                      controls
+                    />
+                    <div className="flex items-center justify-between mt-2 px-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-900 truncate">
+                          {file.fileName}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {formatFileSize(file.fileSize)}
+                        </p>
+                      </div>
+                      <a
+                        href={file.fileUrl}
+                        download={file.fileName}
+                        className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                        title="Download video"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                ) : file.fileType.startsWith('audio/') ? (
+                  /* Audio files with player */
+                  <div className="bg-gray-50 rounded-lg border p-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="flex-shrink-0">
+                        <Mic className="w-8 h-8 text-blue-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {file.fileName}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {formatFileSize(file.fileSize)}
+                        </p>
+                        <audio
+                          src={file.fileUrl}
+                          controls
+                          className="w-full mt-2"
+                        />
+                      </div>
+                      <a
+                        href={file.fileUrl}
+                        download={file.fileName}
+                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                        title="Download audio"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  /* Other files */
+                  <div className="flex items-center p-3 bg-gray-50 rounded-lg border">
+                    <div className="flex-shrink-0 mr-3">
+                      {getFileIcon(file.fileType)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {file.fileName}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatFileSize(file.fileSize)}
+                      </p>
+                    </div>
+                    <div className="flex space-x-2">
+                      <a
+                        href={file.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Open file"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </a>
+                      <a
+                        href={file.fileUrl}
+                        download={file.fileName}
+                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                        title="Download file"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      }
+    } catch {
+      // If not a file message, return as regular text
+    }
+    
+    return content;
   };
 
   const formatTime = (date: Date | string) => {
@@ -1388,29 +2025,29 @@ export const Chat: React.FC = () => {
             <div className="flex-1 flex flex-col bg-white">
               {/* Channel Header */}
               <div className="border-b border-gray-200 bg-white">
-                <div className="px-6 py-3 flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <Hash className="w-5 h-5 text-gray-500" />
+                <div className="px-4 py-2 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Hash className="w-4 h-4 text-gray-500" />
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900">{selectedChannel.name}</h2>
-                      <p className="text-sm text-gray-500">
+                      <h2 className="text-base font-semibold text-gray-900">{selectedChannel.name}</h2>
+                      <p className="text-xs text-gray-500">
                         {selectedChannel.memberCount || 0} members • {selectedChannel.description || 'Channel'}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-1">
                     <button 
                       onClick={() => setShowAddMembersModal(true)}
-                      className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                       title="Add members"
                     >
-                      <UserPlus className="w-5 h-5" />
+                      <UserPlus className="w-4 h-4" />
                     </button>
-                    <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                      <Bell className="w-5 h-5" />
+                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                      <Bell className="w-4 h-4" />
                     </button>
-                    <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                      <Settings className="w-5 h-5" />
+                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                      <Settings className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -1520,7 +2157,11 @@ export const Chat: React.FC = () => {
                           <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
                             <AtSign className="w-4 h-4" />
                           </button>
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <button 
+                            onClick={handleEmojiClick}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Add emoji"
+                          >
                             <Smile className="w-4 h-4" />
                           </button>
                           <div className="h-4 w-px bg-gray-300 mx-1" />
@@ -1585,7 +2226,11 @@ export const Chat: React.FC = () => {
                               <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
                                 <AtSign className="w-4 h-4" />
                               </button>
-                              <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                              <button 
+                                onClick={handleEmojiClick}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Add emoji"
+                              >
                                 <Smile className="w-4 h-4" />
                               </button>
                               <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
@@ -1854,53 +2499,76 @@ export const Chat: React.FC = () => {
               )}
             </div>
           ) : activeSidebarItem === 'dm' && selectedDM ? (
-            <div className="flex-1 flex flex-col bg-white">
+            <div className="flex-1 flex flex-col bg-white h-full overflow-hidden">
               <div className="border-b border-gray-200 bg-white">
-                <div className="px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
+                <div className="px-4 py-2 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
                     <div className="relative">
-                      <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
+                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
                         {availableDirectMessages.find(dm => dm.id === selectedDM)?.name.charAt(0).toUpperCase()}
                       </div>
-                      <div className={onlineUsers.has(selectedDM) ? 'absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white' : 'absolute bottom-0 right-0 w-3 h-3 bg-gray-400 rounded-full border-2 border-white'}></div>
+                      <div className={onlineUsers.has(selectedDM) ? 'absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white' : 'absolute bottom-0 right-0 w-2.5 h-2.5 bg-gray-400 rounded-full border-2 border-white'}></div>
                     </div>
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900">
+                      <h2 className="text-base font-semibold text-gray-900">
                         {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
                       </h2>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-xs text-gray-500">
                         {onlineUsers.has(selectedDM) ? 'Active now' : 'Offline'}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                      <Video className="w-5 h-5" />
+                  <div className="flex items-center space-x-1">
+                    <button 
+                      onClick={handleVideoCall}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Start video call"
+                    >
+                      <Video className="w-4 h-4" />
                     </button>
-                    <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                      <Search className="w-5 h-5" />
+                    <button 
+                      onClick={handleAudioCall}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Start audio call"
+                    >
+                      <Mic className="w-4 h-4" />
                     </button>
-                    <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                      <MoreVertical className="w-5 h-5" />
+                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                      <Search className="w-4 h-4" />
+                    </button>
+                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                      <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-6">
+              <div 
+                ref={messagesContainerRef}
+                className={`flex-1 overflow-y-auto p-3 relative min-h-0 ${dragActive ? 'bg-blue-50 border-2 border-dashed border-blue-300' : ''}`}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                style={{ 
+                  height: 'calc(100vh - 180px)',
+                  scrollBehavior: 'smooth'
+                }}
+              >
                 {currentMessages.length > 0 ? (
-                  <div className="space-y-6">
+                  <div className="space-y-3">
                     {currentMessages.map((message) => (
-                      <div key={message.id} className="flex items-start space-x-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
+                      <div key={message.id} className="flex items-start space-x-2">
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-xs">
                           {(message.sender_name || message.userName || 'U').charAt(0)}
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center space-x-2 mb-1">
-                            <span className="font-semibold text-gray-900">{message.sender_name || message.userName}</span>
+                            <span className="font-medium text-gray-900 text-sm">{message.sender_name || message.userName}</span>
                             <span className="text-xs text-gray-500">{formatTime(message.created_at || message.timestamp)}</span>
                             {(message.is_edited || message.edited) && <span className="text-xs text-gray-400">(edited)</span>}
                           </div>
-                          <div className="text-gray-800">{message.content}</div>
+                          <div className="text-gray-800 text-sm">
+                            {message.message_type === 'file' ? renderFileFromDB(message) : renderFileMessage(message.content)}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1911,20 +2579,42 @@ export const Chat: React.FC = () => {
                     <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
                       <MessageSquare className="w-12 h-12 text-gray-400" />
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    <h3 className="text-base font-semibold text-gray-900 mb-2">
                       Start a conversation
                     </h3>
-                    <p className="text-gray-600 max-w-md">
+                    <p className="text-sm text-gray-600 max-w-md">
                       Send a message to {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
                     </p>
                   </div>
                 )}
+                
+                {/* Drag and drop overlay */}
+                {dragActive && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-blue-50 bg-opacity-90 border-2 border-dashed border-blue-300 rounded-lg z-10">
+                    <div className="text-center">
+                      <Paperclip className="w-12 h-12 text-blue-500 mx-auto mb-3" />
+                      <p className="text-lg font-semibold text-blue-700">Drop files to share</p>
+                      <p className="text-sm text-blue-600">Support for images, videos, documents, and more</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Scroll to bottom button */}
+                {showScrollToBottom && (
+                  <button
+                    onClick={scrollToBottomManual}
+                    className="absolute bottom-4 right-4 p-2 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors z-20"
+                    title="Scroll to bottom"
+                  >
+                    <ScrollDown className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
               {/* Message Input */}
-              <div className="border-t border-gray-200 bg-white p-4">
+              <div className="border-t border-gray-200 bg-white p-2">
                 <div className="bg-white border border-gray-300 rounded-lg">
-                  <div className="flex items-start p-3">
+                  <div className="flex items-center p-2">
                     <input
                       type="text"
                       value={messageInput}
@@ -1953,17 +2643,36 @@ export const Chat: React.FC = () => {
                         <Code className="w-4 h-4" />
                       </button>
                       <div className="h-4 w-px bg-gray-300 mx-1" />
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <label className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors cursor-pointer">
                         <Paperclip className="w-4 h-4" />
-                      </button>
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                        <input
+                          type="file"
+                          multiple
+                          onChange={handleFileSelect}
+                          className="hidden"
+                          accept="*/*"
+                        />
+                      </label>
+                      <button 
+                        onClick={handleEmojiClick}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Add emoji"
+                      >
                         <Smile className="w-4 h-4" />
                       </button>
                       <div className="h-4 w-px bg-gray-300 mx-1" />
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={handleAudioCall}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Start audio call"
+                      >
                         <Mic className="w-4 h-4" />
                       </button>
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={handleVideoCall}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Start video call"
+                      >
                         <Video className="w-4 h-4" />
                       </button>
                     </div>
@@ -3348,6 +4057,315 @@ export const Chat: React.FC = () => {
                   Upgrade Now
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File Preview Modal */}
+      {showFilePreview && selectedFiles.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Share Files ({selectedFiles.length})
+              </h3>
+              <button
+                onClick={() => {
+                  setShowFilePreview(false);
+                  setSelectedFiles([]);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto mb-4">
+              <div className="space-y-3">
+                {selectedFiles.map((file, index) => (
+                  <div key={index} className="flex items-center p-4 bg-gray-50 rounded-lg border">
+                    <div className="flex-shrink-0 mr-4">
+                      {getFileIcon(file.type)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatFileSize(file.size)} • {file.type || 'Unknown type'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newFiles = selectedFiles.filter((_, i) => i !== index);
+                        setSelectedFiles(newFiles);
+                        if (newFiles.length === 0) {
+                          setShowFilePreview(false);
+                        }
+                      }}
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Remove file"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                
+                {/* Add more files button */}
+                <label className="flex items-center justify-center p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors cursor-pointer">
+                  <Plus className="w-5 h-5 text-gray-400 mr-2" />
+                  <span className="text-sm text-gray-600">Add more files</span>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        const newFiles = Array.from(e.target.files);
+                        setSelectedFiles([...selectedFiles, ...newFiles]);
+                      }
+                    }}
+                    className="hidden"
+                    accept="*/*"
+                  />
+                </label>
+              </div>
+            </div>
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowFilePreview(false);
+                  setSelectedFiles([]);
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendFilesMessage}
+                disabled={uploadingFiles || selectedFiles.length === 0}
+                className={`flex-1 px-4 py-2 rounded-lg transition-colors flex items-center justify-center ${
+                  uploadingFiles || selectedFiles.length === 0
+                    ? 'bg-gray-400 text-gray-600 cursor-not-allowed' 
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                {uploadingFiles ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    Send {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video/Audio Call Modal */}
+      {showVideoCallModal && selectedDM && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-96 max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {callType === 'video' ? 'Start Video Call' : 'Start Audio Call'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowVideoCallModal(false);
+                  stopMediaStream();
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="text-center">
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-lg mx-auto mb-3">
+                  {availableDirectMessages.find(dm => dm.id === selectedDM)?.name.charAt(0).toUpperCase()}
+                </div>
+                <p className="text-gray-900 font-medium">
+                  {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                </p>
+                <p className="text-sm text-gray-500">
+                  Ready to start {callType === 'video' ? 'video' : 'audio'} call
+                </p>
+              </div>
+              
+              <div className="border rounded-lg p-4 bg-gray-50">
+                <h4 className="font-medium text-gray-900 mb-3">Media Permissions</h4>
+                {permissionsDenied ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center p-2 bg-red-50 border border-red-200 rounded">
+                      <div className="w-3 h-3 rounded-full mr-2 bg-red-500"></div>
+                      <div>
+                        <span className="text-sm font-medium text-red-800 block">
+                          Camera/Microphone access denied
+                        </span>
+                        <span className="text-xs text-red-600">
+                          Click the camera icon in your browser address bar, select "Allow", then try again.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {callType === 'video' && (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <div className={`w-3 h-3 rounded-full mr-2 ${mediaPermissions.camera ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                          <span className="text-sm text-gray-700">Camera</span>
+                        </div>
+                        <span className="text-xs text-gray-500">
+                          {mediaPermissions.camera ? 'Granted' : 'Not granted'}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <div className={`w-3 h-3 rounded-full mr-2 ${mediaPermissions.microphone ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                        <span className="text-sm text-gray-700">Microphone</span>
+                      </div>
+                      <span className="text-xs text-gray-500">
+                        {mediaPermissions.microphone ? 'Granted' : 'Not granted'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {currentStream && (
+                <div className="border rounded-lg p-3 bg-gray-50">
+                  <div className="flex items-center text-sm text-gray-700">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+                    Media stream active
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                    setShowVideoCallModal(false);
+                    stopMediaStream();
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (permissionsDenied) {
+                      alert('Permissions were denied. Please refresh the page and allow camera/microphone access when prompted.');
+                      return;
+                    }
+                    
+                    const result = await requestMediaPermissions(callType);
+                    if (result.success) {
+                      const callTypeText = callType === 'video' 
+                        ? (result.audioOnly ? 'Audio' : 'Video + Audio')
+                        : 'Audio';
+                      alert(`${callTypeText} call started with ${availableDirectMessages.find(dm => dm.id === selectedDM)?.name}!`);
+                      setShowVideoCallModal(false);
+                    } else {
+                      alert(result.error || 'Failed to access camera/microphone. Please check your permissions.');
+                    }
+                  }}
+                  disabled={permissionsDenied}
+                  className={`flex-1 px-4 py-2 rounded-lg transition-colors flex items-center justify-center ${
+                    permissionsDenied 
+                      ? 'bg-gray-400 text-gray-600 cursor-not-allowed' 
+                      : 'bg-green-600 text-white hover:bg-green-700'
+                  }`}
+                >
+                  <Video className="w-4 h-4 mr-2" />
+                  {permissionsDenied ? 'Permissions Denied' : `Start ${callType === 'video' ? 'Video' : 'Audio'} Call`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Emoji Picker */}
+      {showEmojiPicker && (
+        <div 
+          className="emoji-picker-container fixed z-50"
+          style={{ 
+            top: emojiPickerPosition.top, 
+            left: emojiPickerPosition.left 
+          }}
+        >
+          <EmojiPicker
+            onEmojiClick={onEmojiSelect}
+            width={320}
+            height={350}
+          />
+        </div>
+      )}
+
+      {/* File Preview Modal */}
+      {showFilePreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Share Files</h3>
+              <button
+                onClick={() => {
+                  setShowFilePreview(false);
+                  setSelectedFiles([]);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-3 mb-4 max-h-60 overflow-y-auto">
+              {selectedFiles.map((file, index) => (
+                <div key={index} className="flex items-center space-x-3 p-2 bg-gray-50 rounded">
+                  <div className="p-2 bg-gray-200 rounded">
+                    {getFileIcon(file.type)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                    <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                  </div>
+                  <button
+                    onClick={() => setSelectedFiles(files => files.filter((_, i) => i !== index))}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowFilePreview(false);
+                  setSelectedFiles([]);
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendFilesMessage}
+                disabled={uploadingFiles || selectedFiles.length === 0}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {uploadingFiles ? 'Uploading...' : `Send ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}`}
+              </button>
             </div>
           </div>
         </div>
