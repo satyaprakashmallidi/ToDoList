@@ -167,6 +167,11 @@ export const Chat: React.FC = () => {
   const [sentMessages, setSentMessages] = useState<any[]>([]);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [selectedSentByUser, setSelectedSentByUser] = useState<string | null>(null);
+  
+  // Notification states
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [showSentByDropdown, setShowSentByDropdown] = useState(false);
   const [receivedMessages, setReceivedMessages] = useState<any[]>([]);
   
@@ -186,6 +191,18 @@ export const Chat: React.FC = () => {
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [selectedAssignee, setSelectedAssignee] = useState<TeamMember | null>(null);
   const [followupsFilter, setFollowupsFilter] = useState<'assigned' | 'resolved' | 'all'>('assigned');
+
+  // Delete functionality state
+  const [showDeleteMenu, setShowDeleteMenu] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteType, setDeleteType] = useState<'message' | 'conversation' | null>(null);
+  const [messageToDelete, setMessageToDelete] = useState<string | null>(null);
+
+  // Context menu state
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [selectedMessage, setSelectedMessage] = useState<any>(null);
+  const [longPressTimeout, setLongPressTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Video/Audio Call state
   const [showVideoCallModal, setShowVideoCallModal] = useState(false);
@@ -517,6 +534,48 @@ export const Chat: React.FC = () => {
     }
   };
 
+  // Notification functions
+  const addNotification = (type: string, message: string, fromUser: string) => {
+    const newNotification = {
+      id: Date.now(),
+      type,
+      message,
+      fromUser,
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    
+    setNotifications(prev => [newNotification, ...prev]);
+    setUnreadNotificationCount(prev => prev + 1);
+  };
+
+  const markNotificationAsRead = (notificationId: number) => {
+    setNotifications(prev => 
+      prev.map(notification => 
+        notification.id === notificationId 
+          ? { ...notification, read: true }
+          : notification
+      )
+    );
+    setUnreadNotificationCount(prev => Math.max(0, prev - 1));
+  };
+
+  const markAllNotificationsAsRead = () => {
+    setNotifications(prev => 
+      prev.map(notification => ({ ...notification, read: true }))
+    );
+    setUnreadNotificationCount(0);
+  };
+
+  const deleteNotification = (notificationId: number) => {
+    setNotifications(prev => prev.filter(notification => notification.id !== notificationId));
+    // Also decrease unread count if the notification was unread
+    const notificationToDelete = notifications.find(n => n.id === notificationId);
+    if (notificationToDelete && !notificationToDelete.read) {
+      setUnreadNotificationCount(prev => Math.max(0, prev - 1));
+    }
+  };
+
   // Transform direct conversations to direct messages format
   console.log('🔍 Debug directConversations:', directConversations);
   
@@ -695,6 +754,54 @@ export const Chat: React.FC = () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showSentByDropdown]);
+
+  // Load notifications from localStorage on component mount
+  useEffect(() => {
+    const savedNotifications = localStorage.getItem('chatNotifications');
+    const savedUnreadCount = localStorage.getItem('chatUnreadCount');
+    
+    if (savedNotifications) {
+      try {
+        const parsedNotifications = JSON.parse(savedNotifications);
+        setNotifications(parsedNotifications);
+      } catch (error) {
+        console.error('Error parsing saved notifications:', error);
+      }
+    }
+    
+    if (savedUnreadCount) {
+      try {
+        const parsedCount = parseInt(savedUnreadCount, 10);
+        setUnreadNotificationCount(parsedCount);
+      } catch (error) {
+        console.error('Error parsing saved unread count:', error);
+      }
+    }
+  }, []);
+
+  // Save notifications to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('chatNotifications', JSON.stringify(notifications));
+  }, [notifications]);
+
+  // Save unread count to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('chatUnreadCount', unreadNotificationCount.toString());
+  }, [unreadNotificationCount]);
+
+  // Close notifications dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showNotifications && !(event.target as Element).closest('.relative')) {
+        setShowNotifications(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNotifications]);
 
   // Get all unique users (merge team members and direct messages, removing duplicates)
   const getAllUniqueUsers = () => {
@@ -1181,6 +1288,24 @@ export const Chat: React.FC = () => {
     }
   }, [activeSidebarItem, followupsFilter, user]);
 
+  // Close dropdown and context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showDeleteMenu) {
+        setShowDeleteMenu(false);
+      }
+      if (showContextMenu) {
+        setShowContextMenu(false);
+        setSelectedMessage(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showDeleteMenu, showContextMenu]);
+
   // Real-time reaction updates using Supabase subscriptions
   useEffect(() => {
     if (!selectedChannel || !channelPosts[selectedChannel.id]) return;
@@ -1510,6 +1635,195 @@ export const Chat: React.FC = () => {
       setResolvedTasks(data || []);
     } catch (error) {
       console.error('Error loading resolved tasks:', error);
+    }
+  };
+
+  // Delete Functions
+  const deleteMessage = async (messageId: string) => {
+    try {
+      // Try direct_messages table first
+      let { error } = await supabase
+        .from('direct_messages')
+        .delete()
+        .eq('id', messageId);
+
+      if (error) {
+        console.log('Trying messages table...', error.message);
+        // Try messages table if direct_messages fails
+        const { error: messagesError } = await supabase
+          .from('messages')
+          .delete()
+          .eq('id', messageId);
+        
+        if (messagesError) {
+          console.error('Failed to delete from both tables:', messagesError);
+          throw messagesError;
+        }
+      }
+
+      // Update local state to remove the deleted message
+      const conversationId = selectedDM || currentConversationId;
+      if (conversationId && directMessages[conversationId]) {
+        const updatedMessages = directMessages[conversationId].filter(msg => msg.id !== messageId);
+        setDirectMessages(prev => ({
+          ...prev,
+          [conversationId]: updatedMessages
+        }));
+      }
+
+      // Also update channel messages if applicable
+      if (selectedChannel && channelMessages[selectedChannel.id]) {
+        setChannelMessages(prev => ({
+          ...prev,
+          [selectedChannel.id]: prev[selectedChannel.id].filter(msg => msg.id !== messageId)
+        }));
+      }
+
+      console.log('Message deleted successfully from database and UI');
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      alert('Failed to delete message. Please try again.');
+    }
+  };
+
+  const deleteConversation = async () => {
+    if (!selectedDM) return;
+    
+    try {
+      // Delete all messages in the conversation where current user is sender
+      const { error } = await supabase
+        .from('direct_messages')
+        .delete()
+        .eq('sender_id', user?.id)
+        .eq('recipient_id', selectedDM);
+
+      if (error) throw error;
+
+      // Clear local state
+      setDirectMessages(prev => ({
+        ...prev,
+        [selectedDM]: []
+      }));
+
+      // Optionally navigate away from the conversation
+      setSelectedDM(null);
+
+      console.log('Conversation deleted successfully');
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    console.log('Delete confirm clicked - Type:', deleteType, 'Message ID:', messageToDelete);
+    
+    if (deleteType === 'message' && messageToDelete) {
+      console.log('Calling deleteMessage...');
+      await deleteMessage(messageToDelete);
+    } else if (deleteType === 'conversation') {
+      console.log('Calling deleteConversation...');
+      await deleteConversation();
+    }
+    
+    setShowDeleteConfirm(false);
+    setShowDeleteMenu(false);
+    setDeleteType(null);
+    setMessageToDelete(null);
+    
+    console.log('Delete confirmation completed');
+  };
+
+  // Context Menu Functions
+  const showMessageContextMenu = (event: React.MouseEvent, message: any) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const x = Math.min(event.clientX, window.innerWidth - 200); // Ensure it fits on screen
+    const y = Math.min(event.clientY, window.innerHeight - 150);
+    
+    setSelectedMessage(message);
+    setContextMenuPosition({ x, y });
+    setShowContextMenu(true);
+  };
+
+  const handleLongPressStart = (event: React.TouchEvent | React.MouseEvent, message: any) => {
+    const timeout = setTimeout(() => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      const x = Math.min(rect.left + rect.width / 2, window.innerWidth - 200);
+      const y = Math.min(rect.top + rect.height / 2, window.innerHeight - 150);
+      
+      setSelectedMessage(message);
+      setContextMenuPosition({ x, y });
+      setShowContextMenu(true);
+    }, 500); // 500ms long press
+
+    setLongPressTimeout(timeout);
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimeout) {
+      clearTimeout(longPressTimeout);
+      setLongPressTimeout(null);
+    }
+  };
+
+  const closeContextMenu = () => {
+    setShowContextMenu(false);
+    setSelectedMessage(null);
+  };
+
+  const handleDeleteFromContext = () => {
+    if (selectedMessage) {
+      console.log('Delete context clicked for message:', selectedMessage);
+      console.log('Message ID:', selectedMessage.id);
+      console.log('Selected DM:', selectedDM);
+      console.log('Current Conversation ID:', currentConversationId);
+      setMessageToDelete(selectedMessage.id);
+      setDeleteType('message');
+      setShowDeleteConfirm(true);
+      closeContextMenu();
+    }
+  };
+
+  const addReactionToMessage = async (messageId: string, emoji: string) => {
+    try {
+      // Add reaction to database
+      const { error } = await supabase
+        .from('message_reactions')
+        .insert({
+          message_id: messageId,
+          user_id: user?.id,
+          reaction: emoji,
+          created_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      // Update local state
+      setMessageReactions(prev => {
+        const existing = prev[messageId] || [];
+        const userReaction = existing.find(r => r.user_id === user?.id);
+        
+        if (userReaction) {
+          // Update existing reaction
+          return {
+            ...prev,
+            [messageId]: existing.map(r => 
+              r.user_id === user?.id ? { ...r, reaction: emoji } : r
+            )
+          };
+        } else {
+          // Add new reaction
+          return {
+            ...prev,
+            [messageId]: [...existing, { user_id: user?.id, reaction: emoji }]
+          };
+        }
+      });
+
+      closeContextMenu();
+    } catch (error) {
+      console.error('Error adding reaction:', error);
     }
   };
 
@@ -2625,9 +2939,6 @@ export const Chat: React.FC = () => {
                       <Hash className="w-4 h-4 mr-2 flex-shrink-0" />
                       <span className="truncate flex-1 text-left">{channel.name}</span>
                       {(channel as any).locked && <Lock className="w-3 h-3 text-gray-400" />}
-                      {channel.member_count && channel.member_count > 0 && (
-                        <span className="text-xs text-gray-500">{channel.member_count}</span>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -2707,8 +3018,8 @@ export const Chat: React.FC = () => {
             /* Channel View */
             <div className="flex-1 flex flex-col bg-white">
               {/* Channel Header */}
-              <div className="border-b border-gray-200 bg-white">
-                <div className="px-4 py-2 flex items-center justify-between">
+              <div className="border-b border-gray-200 bg-white relative">
+                <div className="px-4 py-3 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <Hash className="w-4 h-4 text-gray-500" />
                     <div>
@@ -2726,14 +3037,84 @@ export const Chat: React.FC = () => {
                     >
                       <UserPlus className="w-4 h-4" />
                     </button>
-                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                    <button 
+                      onClick={() => setShowNotifications(!showNotifications)}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors relative"
+                    >
                       <Bell className="w-4 h-4" />
+                      {unreadNotificationCount > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                          {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                        </span>
+                      )}
                     </button>
                     <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
                       <Settings className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
+
+                {/* Notifications Dropdown */}
+                {showNotifications && (
+                  <div className="absolute top-full right-4 mt-2 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+                    <div className="p-4 border-b border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
+                        {unreadNotificationCount > 0 && (
+                          <button
+                            onClick={markAllNotificationsAsRead}
+                            className="text-xs text-blue-600 hover:text-blue-700"
+                          >
+                            Mark all as read
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {notifications.length > 0 ? (
+                        notifications.map((notification) => (
+                          <div
+                            key={notification.id}
+                            onClick={() => markNotificationAsRead(notification.id)}
+                            className={`p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${
+                              !notification.read ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <div className="flex items-start space-x-3">
+                              <div className={`w-2 h-2 rounded-full mt-2 ${!notification.read ? 'bg-blue-500' : 'bg-gray-300'}`} />
+                              <div className="flex-1">
+                                <p className="text-sm text-gray-900">{notification.message}</p>
+                                <div className="flex items-center space-x-2 mt-1">
+                                  <span className="text-xs text-gray-500">{notification.fromUser}</span>
+                                  <span className="text-xs text-gray-400">
+                                    {new Date(notification.timestamp).toLocaleTimeString()}
+                                  </span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteNotification(notification.id);
+                                }}
+                                className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                title="Delete notification"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-6 text-center">
+                          <Bell className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                          <p className="text-sm text-gray-500">No notifications yet</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 
                 {/* Channel/Posts Tabs */}
                 <div className="px-4 flex space-x-4">
@@ -2780,57 +3161,7 @@ export const Chat: React.FC = () => {
                               </div>
                               <div className="text-sm text-gray-800">{message.content}</div>
 
-                              {/* Message Reactions */}
-                              {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                  {messageReactions[message.id].map((reaction, idx) => (
-                                    <button
-                                      key={idx}
-                                      onClick={() => onEmojiReact(message.id, reaction.emoji)}
-                                      className={`inline-flex items-center px-2 py-1 rounded-full text-xs border transition-colors ${
-                                        reaction.users.includes(user?.id || '')
-                                          ? 'bg-blue-100 border-blue-300 text-blue-700'
-                                          : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
-                                      }`}
-                                    >
-                                      <span className="mr-1">{reaction.emoji}</span>
-                                      <span>{reaction.count}</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
 
-                              {/* Reaction Button */}
-                              <div className="flex items-center mt-1">
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    setShowReactionPicker(showReactionPicker === message.id ? null : message.id);
-                                  }}
-                                  className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                                  title="Add reaction"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                  </svg>
-                                </button>
-
-                                {/* Quick Reaction Picker */}
-                                {showReactionPicker === message.id && (
-                                  <div className="reaction-picker ml-2 flex space-x-1 bg-white border border-gray-200 rounded-full px-2 py-1 shadow-sm">
-                                    {['❤️', '😂', '👍', '😮', '😢', '😡'].map(emoji => (
-                                      <button
-                                        key={emoji}
-                                        onClick={() => onEmojiReact(message.id, emoji)}
-                                        className="hover:bg-gray-100 rounded p-1 text-sm transition-colors"
-                                        title={`React with ${emoji}`}
-                                      >
-                                        {emoji}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
                             </div>
                           </div>
                         ))}
@@ -3236,7 +3567,7 @@ export const Chat: React.FC = () => {
           ) : activeSidebarItem === 'dm' && selectedDM ? (
             <div className="flex-1 flex flex-col bg-white h-full overflow-hidden">
               <div className="border-b border-gray-200 bg-white flex-shrink-0">
-                <div className="px-4 py-2 flex items-center justify-between">
+                <div className="px-4 py-3 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <div className="relative">
                       <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
@@ -3271,9 +3602,33 @@ export const Chat: React.FC = () => {
                     <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
                       <Search className="w-4 h-4" />
                     </button>
-                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+                    <div className="relative">
+                      <button 
+                        onClick={() => setShowDeleteMenu(!showDeleteMenu)}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+                      
+                      {/* Dropdown Menu */}
+                      {showDeleteMenu && (
+                        <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                          <div className="py-1">
+                            <button
+                              onClick={() => {
+                                setDeleteType('conversation');
+                                setShowDeleteConfirm(true);
+                                setShowDeleteMenu(false);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 transition-colors flex items-center"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Conversation
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3288,11 +3643,20 @@ export const Chat: React.FC = () => {
                 {currentMessages.length > 0 ? (
                   <div>
                     {currentMessages.map((message) => (
-                      <div key={message.id} className="flex items-start space-x-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50">
+                      <div 
+                        key={message.id} 
+                        className="relative flex items-start space-x-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 group cursor-pointer"
+                        onContextMenu={(e) => showMessageContextMenu(e, message)}
+                        onMouseDown={(e) => handleLongPressStart(e, message)}
+                        onMouseUp={handleLongPressEnd}
+                        onMouseLeave={handleLongPressEnd}
+                        onTouchStart={(e) => handleLongPressStart(e, message)}
+                        onTouchEnd={handleLongPressEnd}
+                      >
                         <div className="w-6 h-6 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-xs">
                           {(message.sender_name || message.userName || 'U').charAt(0)}
                         </div>
-                        <div className="flex-1">
+                        <div className="flex-1 pr-8">
                           <div className="flex items-center space-x-2 mb-1">
                             <span className="font-medium text-gray-900 text-xs">{message.sender_name || message.userName}</span>
                             <span className="text-xs text-gray-500">{formatTime(message.created_at || message.timestamp)}</span>
@@ -3302,57 +3666,7 @@ export const Chat: React.FC = () => {
                             {message.message_type === 'file' ? renderFileFromDB(message) : renderFileMessage(message.content)}
                           </div>
 
-                          {/* Message Reactions */}
-                          {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {messageReactions[message.id].map((reaction, idx) => (
-                                <button
-                                  key={idx}
-                                  onClick={() => onEmojiReact(message.id, reaction.emoji)}
-                                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs border transition-colors ${
-                                    reaction.users.includes(user?.id || '')
-                                      ? 'bg-blue-100 border-blue-300 text-blue-700'
-                                      : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
-                                  }`}
-                                >
-                                  <span className="mr-1">{reaction.emoji}</span>
-                                  <span>{reaction.count}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
 
-                          {/* Reaction Button */}
-                          <div className="flex items-center mt-1">
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                setShowReactionPicker(showReactionPicker === message.id ? null : message.id);
-                              }}
-                              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                              title="Add reaction"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                            </button>
-
-                            {/* Quick Reaction Picker */}
-                            {showReactionPicker === message.id && (
-                              <div className="reaction-picker ml-2 flex space-x-1 bg-white border border-gray-200 rounded-full px-2 py-1 shadow-sm">
-                                {['❤️', '😂', '👍', '😮', '😢', '😡'].map(emoji => (
-                                  <button
-                                    key={emoji}
-                                    onClick={() => onEmojiReact(message.id, emoji)}
-                                    className="hover:bg-gray-100 rounded p-1 text-sm transition-colors"
-                                    title={`React with ${emoji}`}
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
                         </div>
                       </div>
                     ))}
@@ -3461,13 +3775,97 @@ export const Chat: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Delete Confirmation Modal */}
+              {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-lg max-w-md w-full mx-4">
+                    <div className="p-6">
+                      <div className="flex items-center space-x-3 mb-4">
+                        <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                          <Trash2 className="w-5 h-5 text-red-600" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            {deleteType === 'conversation' ? 'Delete Conversation' : 'Delete Message'}
+                          </h3>
+                          <p className="text-sm text-gray-600">
+                            {deleteType === 'conversation' 
+                              ? 'This will delete all your messages in this conversation. This action cannot be undone.'
+                              : 'This will permanently delete this message. This action cannot be undone.'
+                            }
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-end space-x-3">
+                        <button
+                          onClick={() => {
+                            setShowDeleteConfirm(false);
+                            setDeleteType(null);
+                            setMessageToDelete(null);
+                          }}
+                          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleDeleteConfirm}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Context Menu */}
+              {showContextMenu && selectedMessage && (
+                <div
+                  className="fixed bg-white rounded-lg shadow-xl border border-gray-300 py-2 z-50 min-w-[200px]"
+                  style={{
+                    left: `${contextMenuPosition.x}px`,
+                    top: `${contextMenuPosition.y}px`,
+                    transform: 'translate(-50%, -50%)'
+                  }}
+                >
+                  {/* Emoji Reactions */}
+                  <div className="px-4 py-2 border-b border-gray-100">
+                    <div className="flex space-x-2">
+                      {['👍', '❤️', '😂', '😮', '😢', '😡'].map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => addReactionToMessage(selectedMessage.id, emoji)}
+                          className="p-2 hover:bg-gray-100 rounded transition-colors text-lg"
+                          title={`React with ${emoji}`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Action Options */}
+                  <div className="py-1">
+                    <button
+                      onClick={handleDeleteFromContext}
+                      className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 transition-colors flex items-center"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete Message
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : activeSidebarItem === 'posts' ? (
             /* Posts Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Posts Header */}
               <div className="px-4 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-900">Posts</h2>
+                <h2 className="text-lg font-semibold text-gray-900">Posts</h2>
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
@@ -3931,7 +4329,7 @@ export const Chat: React.FC = () => {
             /* Replies Content */
             <div className="flex-1 flex flex-col bg-white overflow-hidden h-full">
               {/* Replies Header */}
-              <div className="px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0">
+              <div className="px-4 py-4 border-b border-gray-200 bg-white flex-shrink-0">
                 <div className="flex justify-between items-center mb-2">
                   <h2 className="text-lg font-semibold text-gray-900">Replies</h2>
                 </div>
@@ -4070,7 +4468,7 @@ export const Chat: React.FC = () => {
             /* FollowUps Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* FollowUps Header */}
-              <div className="px-4 py-2 border-b border-gray-200 bg-white">
+              <div className="px-4 py-4 border-b border-gray-200 bg-white">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">FollowUps</h2>
                 
                 {/* Search Bar */}
@@ -4271,7 +4669,7 @@ export const Chat: React.FC = () => {
             /* Activity Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Activity Header */}
-              <div className="px-4 py-2 border-b border-gray-200 bg-white">
+              <div className="px-4 py-4 border-b border-gray-200 bg-white">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">Activity</h2>
                 
                 {/* Filter Tabs */}
@@ -4415,7 +4813,7 @@ export const Chat: React.FC = () => {
             /* Drafts & Sent Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Header */}
-              <div className="px-4 py-2 border-b border-gray-200 bg-white">
+              <div className="px-4 py-4 border-b border-gray-200 bg-white">
                 <div className="flex items-center space-x-3 mb-3">
                   <div className="w-6 h-6 bg-purple-600 rounded-full flex items-center justify-center">
                     <Edit3 className="w-3 h-3 text-white" />
@@ -4822,28 +5220,41 @@ export const Chat: React.FC = () => {
                     member.name.toLowerCase().includes(searchMember.toLowerCase()) ||
                     member.email.toLowerCase().includes(searchMember.toLowerCase())
                   )
-                  .filter(member => 
-                    !selectedChannel.members?.some(m => m.id === member.id)
-                  )
-                  .map(member => (
+                  .map(member => {
+                    const isExistingMember = selectedChannel.members?.some(m => m.id === member.id);
+                    return (
                     <div
                       key={member.id}
-                      className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg cursor-pointer"
+                      className={`flex items-center justify-between p-3 rounded-lg ${
+                        isExistingMember 
+                          ? 'bg-blue-50 cursor-default' 
+                          : 'hover:bg-gray-50 cursor-pointer'
+                      }`}
                       onClick={() => {
-                        if (selectedMembers.includes(member.id)) {
-                          setSelectedMembers(selectedMembers.filter(id => id !== member.id));
-                        } else {
-                          setSelectedMembers([...selectedMembers, member.id]);
+                        if (!isExistingMember) {
+                          if (selectedMembers.includes(member.id)) {
+                            setSelectedMembers(selectedMembers.filter(id => id !== member.id));
+                          } else {
+                            setSelectedMembers([...selectedMembers, member.id]);
+                          }
                         }
                       }}
                     >
                       <div className="flex items-center space-x-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedMembers.includes(member.id)}
-                          onChange={() => {}}
-                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
+                        {isExistingMember ? (
+                          <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                          </div>
+                        ) : (
+                          <input
+                            type="checkbox"
+                            checked={selectedMembers.includes(member.id)}
+                            onChange={() => {}}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                        )}
                         <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
                           {member.name.charAt(0)}
                         </div>
@@ -4852,14 +5263,20 @@ export const Chat: React.FC = () => {
                           <p className="text-xs text-gray-500">{member.email} • {member.role}</p>
                         </div>
                       </div>
-                      <div className={`w-2 h-2 rounded-full ${
-                        member.status === 'online' ? 'bg-green-500' :
-                        member.status === 'idle' ? 'bg-yellow-500' :
-                        member.status === 'dnd' ? 'bg-red-500' :
-                        'bg-gray-400'
-                      }`} />
+                      <div className="flex items-center space-x-2">
+                        {isExistingMember && (
+                          <span className="text-xs text-blue-600 font-medium">Already in channel</span>
+                        )}
+                        <div className={`w-2 h-2 rounded-full ${
+                          member.status === 'online' ? 'bg-green-500' :
+                          member.status === 'idle' ? 'bg-yellow-500' :
+                          member.status === 'dnd' ? 'bg-red-500' :
+                          'bg-gray-400'
+                        }`} />
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
               </div>
 
               {/* Current Members in Channel */}
@@ -4883,7 +5300,14 @@ export const Chat: React.FC = () => {
                             <p className="text-xs text-gray-500">{member.email} • {member.role}</p>
                           </div>
                         </div>
-                        <span className="text-xs text-gray-500">Member</span>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                          </div>
+                          <span className="text-xs text-gray-500">Member</span>
+                        </div>
                       </div>
                     ))}
                   </div>
