@@ -1860,22 +1860,15 @@ export const Chat: React.FC = () => {
   }, [localStream, screenStream, isScreenSharing]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
-
-  // For demo purposes, show local stream as remote stream if no actual remote stream
-  useEffect(() => {
-    if (!remoteStream && localStream && showVideoCall) {
-      // Create a clone of the local stream for demo
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        const clonedStream = new MediaStream([videoTrack.clone()]);
-        setRemoteStream(clonedStream);
+    if (remoteVideoRef.current) {
+      // Show screen share in main area if sharing, otherwise show remote stream
+      const streamToShow = isScreenSharing ? screenStream : remoteStream;
+      if (streamToShow) {
+        remoteVideoRef.current.srcObject = streamToShow;
       }
     }
-  }, [localStream, showVideoCall, remoteStream]);
+  }, [remoteStream, screenStream, isScreenSharing]);
+
 
   const toggleVideo = () => {
     if (localStream) {
@@ -1918,9 +1911,10 @@ export const Chat: React.FC = () => {
       setScreenStream(displayStream);
       setIsScreenSharing(true);
 
-      // Update local video to show screen share
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = displayStream;
+      // For screen sharing, show the screen in the main (remote) video area
+      // and show the user's camera in the small local window
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = displayStream;
       }
 
       // Handle when user stops sharing via browser controls
@@ -1941,10 +1935,8 @@ export const Chat: React.FC = () => {
     }
     setIsScreenSharing(false);
 
-    // Switch back to camera if available
-    if (localStream && localVideoRef.current) {
-      localVideoRef.current.srcObject = localStream;
-    }
+    // Restore the remote video area to show remote participant (if any)
+    // The useEffect hooks will handle updating the video elements properly
   };
 
   const endCall = () => {
