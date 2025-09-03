@@ -54,6 +54,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useChannels } from '../hooks/useChannels';
 import { ChannelCreateModal } from '../components/ChannelCreateModal';
 import { supabase } from '../lib/supabase';
+import { checkAndSetupStorage, getStorageInstructions } from '../utils/setupStorage';
 
 interface Channel {
   id: string;
@@ -178,6 +179,13 @@ export const Chat: React.FC = () => {
   // Activity state
   const [activityTab, setActivityTab] = useState<'mentions' | 'reactions' | 'assigned'>('mentions');
   const [activityReactions, setActivityReactions] = useState<any[]>([]);
+
+  // Task Assignment state
+  const [assignedTasks, setAssignedTasks] = useState<any[]>([]);
+  const [resolvedTasks, setResolvedTasks] = useState<any[]>([]);
+  const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [selectedAssignee, setSelectedAssignee] = useState<TeamMember | null>(null);
+  const [followupsFilter, setFollowupsFilter] = useState<'assigned' | 'resolved' | 'all'>('assigned');
 
   // Video/Audio Call state
   const [showVideoCallModal, setShowVideoCallModal] = useState(false);
@@ -948,9 +956,10 @@ export const Chat: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [currentMessages]);
+  // Auto-scroll disabled - users can manually scroll
+  // useEffect(() => {
+  //   scrollToBottom();
+  // }, [currentMessages]);
 
   // TEMPORARILY DISABLED: Auto-mark channel messages as read when viewing
   // useEffect(() => {
@@ -1161,6 +1170,16 @@ export const Chat: React.FC = () => {
     }
   }, [activeSidebarItem, activityTab, user]);
 
+  // Load tasks when followups tab is active
+  useEffect(() => {
+    if (activeSidebarItem === 'followups' && user) {
+      if (followupsFilter === 'assigned') {
+        loadAssignedTasks();
+      } else if (followupsFilter === 'resolved') {
+        loadResolvedTasks();
+      }
+    }
+  }, [activeSidebarItem, followupsFilter, user]);
 
   // Real-time reaction updates using Supabase subscriptions
   useEffect(() => {
@@ -1393,6 +1412,107 @@ export const Chat: React.FC = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // Task Assignment Functions
+  const assignTaskToMember = async (taskId: string, memberId: string, taskDescription: string) => {
+    try {
+      // Create assignment record in database
+      const { data, error } = await supabase
+        .from('task_assignments')
+        .insert({
+          task_id: taskId,
+          assigned_to: memberId,
+          assigned_by: user?.id,
+          task_description: taskDescription,
+          status: 'assigned',
+          created_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      // Update local state
+      const assignedMember = teamMembers.find(member => member.id === memberId);
+      const newTask = {
+        id: taskId,
+        description: taskDescription,
+        assignedTo: assignedMember,
+        assignedBy: user,
+        status: 'assigned',
+        createdAt: new Date()
+      };
+
+      setAssignedTasks(prev => [...prev, newTask]);
+      console.log('Task assigned successfully:', newTask);
+    } catch (error) {
+      console.error('Error assigning task:', error);
+    }
+  };
+
+  const resolveTask = async (taskId: string) => {
+    try {
+      // Update assignment status in database
+      const { error } = await supabase
+        .from('task_assignments')
+        .update({ 
+          status: 'resolved',
+          resolved_at: new Date().toISOString()
+        })
+        .eq('task_id', taskId);
+
+      if (error) throw error;
+
+      // Update local state
+      setAssignedTasks(prev => prev.filter(task => task.id !== taskId));
+      setResolvedTasks(prev => {
+        const resolvedTask = assignedTasks.find(task => task.id === taskId);
+        return resolvedTask ? [...prev, { ...resolvedTask, status: 'resolved' }] : prev;
+      });
+
+      console.log('Task resolved successfully');
+    } catch (error) {
+      console.error('Error resolving task:', error);
+    }
+  };
+
+  const loadAssignedTasks = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('task_assignments')
+        .select(`
+          *,
+          assigned_to_profile:profiles!task_assignments_assigned_to_fkey(id, email, full_name),
+          assigned_by_profile:profiles!task_assignments_assigned_by_fkey(id, email, full_name)
+        `)
+        .eq('assigned_to', user?.id)
+        .eq('status', 'assigned');
+
+      if (error) throw error;
+
+      setAssignedTasks(data || []);
+    } catch (error) {
+      console.error('Error loading assigned tasks:', error);
+    }
+  };
+
+  const loadResolvedTasks = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('task_assignments')
+        .select(`
+          *,
+          assigned_to_profile:profiles!task_assignments_assigned_to_fkey(id, email, full_name),
+          assigned_by_profile:profiles!task_assignments_assigned_by_fkey(id, email, full_name)
+        `)
+        .eq('assigned_to', user?.id)
+        .eq('status', 'resolved');
+
+      if (error) throw error;
+
+      setResolvedTasks(data || []);
+    } catch (error) {
+      console.error('Error loading resolved tasks:', error);
+    }
+  };
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files) {
@@ -1427,7 +1547,7 @@ export const Chat: React.FC = () => {
   const uploadFiles = async (): Promise<string[]> => {
     if (selectedFiles.length === 0) return [];
     
-    setUploadingFiles(true);
+    console.log('📁 Starting file upload to Supabase Storage...');
     const uploadedUrls: string[] = [];
     
     try {
@@ -1435,51 +1555,92 @@ export const Chat: React.FC = () => {
         throw new Error('User not authenticated');
       }
 
+      // Check and setup storage automatically
+      const storageStatus = await checkAndSetupStorage();
+      
+      if (!storageStatus.success) {
+        console.error('❌ Storage setup failed:', storageStatus.message);
+        
+        // Don't show alert here - let sendFilesMessage handle it
+        // Just use fallback silently
+        console.warn('🔄 Using blob URL fallback for all files');
+        const fallbackUrls: string[] = [];
+        for (const file of selectedFiles) {
+          const blobUrl = URL.createObjectURL(file);
+          fallbackUrls.push(blobUrl);
+        }
+        return fallbackUrls;
+      }
+      
+      console.log('✅ Storage setup verified');
+
       for (const file of selectedFiles) {
+        console.log(`⬆️  Uploading ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+        
         // Create a unique filename with user ID folder structure
         const timestamp = Date.now();
         const fileExt = file.name.split('.').pop();
         const fileName = `${timestamp}-${file.name}`;
         const filePath = `${user.id}/${fileName}`;
         
-        // Upload to Supabase Storage
-        const { data, error } = await supabase.storage
+        // Upload to Supabase Storage with timeout
+        const uploadPromise = supabase.storage
           .from('chat-files')
           .upload(filePath, file, {
             cacheControl: '3600',
             upsert: false
           });
 
+        // Add timeout to prevent stuck uploads
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Upload timeout after 30 seconds')), 30000);
+        });
+
+        const { data, error } = await Promise.race([uploadPromise, timeoutPromise]) as any;
+
         if (error) {
-          console.error('Error uploading file:', error);
-          // If bucket doesn't exist, fall back to blob URL temporarily
-          if (error.message.includes('bucket') || error.message.includes('not found')) {
-            console.warn('Storage bucket not configured. Please create "chat-files" bucket in Supabase.');
+          console.error('❌ Error uploading file:', file.name, error);
+          
+          // If bucket doesn't exist or permission issues, use blob URL fallback
+          if (error.message.includes('bucket') || 
+              error.message.includes('not found') || 
+              error.message.includes('permission') ||
+              error.message.includes('policy')) {
+            console.warn('🔄 Falling back to blob URL for:', file.name);
             const blobUrl = URL.createObjectURL(file);
             uploadedUrls.push(blobUrl);
+            continue;
+          } else {
+            // For other errors, skip this file
+            console.error('❌ Skipping file due to error:', file.name);
+            continue;
           }
-          continue;
         }
+
+        console.log('✅ File uploaded successfully:', file.name);
 
         // Get public URL for the uploaded file
         const { data: { publicUrl } } = supabase.storage
           .from('chat-files')
           .getPublicUrl(filePath);
         
+        console.log('🔗 Public URL generated:', publicUrl);
         uploadedUrls.push(publicUrl);
       }
       
+      console.log(`📊 Upload summary: ${uploadedUrls.length}/${selectedFiles.length} files processed`);
       return uploadedUrls;
     } catch (error) {
-      console.error('File upload error:', error);
-      // Fallback to blob URLs if Supabase storage fails
+      console.error('❌ Critical file upload error:', error);
+      
+      // Fallback to blob URLs if Supabase storage completely fails
+      console.warn('🔄 Using blob URL fallback for all files');
+      const fallbackUrls: string[] = [];
       for (const file of selectedFiles) {
         const blobUrl = URL.createObjectURL(file);
-        uploadedUrls.push(blobUrl);
+        fallbackUrls.push(blobUrl);
       }
-      return uploadedUrls;
-    } finally {
-      setUploadingFiles(false);
+      return fallbackUrls;
     }
   };
 
@@ -1967,15 +2128,35 @@ export const Chat: React.FC = () => {
   const sendFilesMessage = async () => {
     if (selectedFiles.length === 0) return;
     
+    console.log('📤 Starting file upload process...');
+    console.log('Selected files:', selectedFiles.map(f => ({ name: f.name, size: f.size, type: f.type })));
+    console.log('Current conversation ID:', currentConversationId);
+    console.log('Selected DM:', selectedDM);
+    console.log('Selected Channel:', selectedChannel?.name);
+    
+    // Prevent duplicate function calls
+    if (uploadingFiles) {
+      console.log('⚠️ Upload already in progress, ignoring duplicate call');
+      return;
+    }
+    
+    // Ensure upload state is set at the start of this function
+    setUploadingFiles(true);
+    
     try {
       const uploadedUrls = await uploadFiles();
       
       if (uploadedUrls.length === 0) {
-        console.error('No files were uploaded successfully');
+        console.error('❌ No files were uploaded successfully');
+        
+        // Show detailed storage setup instructions
+        const instructions = await getStorageInstructions();
+        alert(`Failed to upload files.\n\n${instructions}`);
         return;
       }
       
-      console.log(`Sending ${selectedFiles.length} files to conversation`);
+      console.log('✅ Files uploaded successfully:', uploadedUrls);
+      console.log(`📨 Sending ${selectedFiles.length} files to conversation`);
       
       // Send each file as a separate message
       for (let i = 0; i < selectedFiles.length; i++) {
@@ -2022,13 +2203,39 @@ export const Chat: React.FC = () => {
         await loadDirectMessages(currentConversationId);
       }
       
-      // Clear selected files
+      // Clear selected files and close modal
       setSelectedFiles([]);
       setShowFilePreview(false);
       
-      console.log('Files sent successfully!');
+      console.log('✅ All files sent successfully!');
     } catch (error) {
-      console.error('Error sending files:', error);
+      console.error('❌ Error sending files:', error);
+      alert(`❌ Failed to send files: ${error.message}. Please check console for details.`);
+      
+      // Keep modal open so user can try again
+      // setShowFilePreview(false); // Don't close on error
+    } finally {
+      // Always ensure upload state is reset
+      setUploadingFiles(false);
+    }
+  };
+
+  // Manual storage setup function
+  const setupStorageManually = async () => {
+    try {
+      console.log('🛠️ Attempting manual storage setup...');
+      const result = await checkAndSetupStorage();
+      
+      if (result.success) {
+        alert('✅ Storage setup completed! You can now upload files.');
+      } else {
+        const instructions = await getStorageInstructions();
+        alert(`❌ Automatic setup failed.\n\n${instructions}`);
+      }
+    } catch (error) {
+      console.error('❌ Manual setup error:', error);
+      const instructions = await getStorageInstructions();
+      alert(`❌ Setup failed: ${error.message}\n\n${instructions}`);
     }
   };
 
@@ -2327,9 +2534,9 @@ export const Chat: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-full flex bg-gray-50 -mx-3 -my-4 sm:-mx-6 sm:-my-6 lg:-mx-8 lg:-my-8">
+    <div className="h-screen w-full flex bg-gray-50 -mx-3 -my-4 sm:-mx-6 sm:-my-6 lg:-mx-8 lg:-my-8 overflow-hidden">
       {/* Left Sidebar */}
-      <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col h-full">
+      <div className="w-72 bg-gray-100 border-r border-gray-200 flex flex-col h-screen overflow-hidden">
         {/* Single Chat Header */}
         <div className="px-6 py-4 border-b border-gray-200 bg-white">
           <div className="flex items-center">
@@ -2341,9 +2548,9 @@ export const Chat: React.FC = () => {
         </div>
 
         {/* Chat Content */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col overflow-hidden h-full">
           {/* Sidebar Navigation */}
-          <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden h-0">
             <div className="py-2 flex-shrink-0">
               {sidebarItems.map((item) => (
                 <button
@@ -2370,6 +2577,7 @@ export const Chat: React.FC = () => {
 
             {/* Channels Section */}
             <div className="px-2 py-3 border-t border-gray-200 flex-shrink-0">
+              <div className="max-h-64 overflow-y-auto" style={{scrollbarWidth: 'none', msOverflowStyle: 'none'}}>
               <div className="flex items-center justify-between px-2 py-1 mb-1">
                 <span className="text-xs font-semibold text-gray-600">CHANNELS</span>
                 <button 
@@ -2424,12 +2632,13 @@ export const Chat: React.FC = () => {
                   ))}
                 </div>
               )}
+              </div>
             </div>
 
             {/* Direct Messages Section */}
-            <div className="px-2 py-3 border-t border-gray-200 flex-1 flex flex-col min-h-0">
-              <div className="px-2 py-1 text-xs font-semibold text-gray-600 mb-1">DIRECT MESSAGES</div>
-              <div className="space-y-0.5 flex-1 overflow-y-auto min-h-0">
+            <div className="px-2 py-3 border-t border-gray-200 flex-1 flex flex-col min-h-0 h-0">
+              <div className="px-2 py-1 text-xs font-semibold text-gray-600 mb-1 flex-shrink-0">DIRECT MESSAGES</div>
+              <div className="space-y-0.5 flex-1 overflow-y-auto min-h-0" style={{scrollbarWidth: 'none', msOverflowStyle: 'none'}}>
                 {availableDirectMessages.length > 0 ? (
                   availableDirectMessages.map((dm) => (
                     <button
@@ -2472,7 +2681,7 @@ export const Chat: React.FC = () => {
           </div>
 
         {/* Bottom User Section */}
-        <div className="p-3 border-t border-gray-200 bg-gray-100">
+        <div className="p-3 border-t border-gray-200 bg-gray-100 flex-shrink-0">
           <div className="flex items-center">
             <div className="relative">
               <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
@@ -2490,9 +2699,9 @@ export const Chat: React.FC = () => {
       </div>
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col bg-white">
+      <div className="flex-1 flex flex-col bg-white h-screen overflow-hidden">
         {/* Main Content - Chat Interface */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Content Area */}
           {activeSidebarItem === 'channel' && selectedChannel ? (
             /* Channel View */
@@ -2527,10 +2736,10 @@ export const Chat: React.FC = () => {
                 </div>
                 
                 {/* Channel/Posts Tabs */}
-                <div className="px-6 flex space-x-6">
+                <div className="px-4 flex space-x-4">
                   <button
                     onClick={() => setChannelView('channel')}
-                    className={`py-3 text-sm font-medium border-b-2 transition-colors ${
+                    className={`py-2 text-xs font-medium border-b-2 transition-colors ${
                       channelView === 'channel'
                         ? 'text-gray-900 border-gray-900'
                         : 'text-gray-500 border-transparent hover:text-gray-700'
@@ -2540,7 +2749,7 @@ export const Chat: React.FC = () => {
                   </button>
                   <button
                     onClick={() => setChannelView('posts')}
-                    className={`py-3 text-sm font-medium border-b-2 transition-colors ${
+                    className={`py-2 text-xs font-medium border-b-2 transition-colors ${
                       channelView === 'posts'
                         ? 'text-gray-900 border-gray-900'
                         : 'text-gray-500 border-transparent hover:text-gray-700'
@@ -2555,21 +2764,21 @@ export const Chat: React.FC = () => {
                 /* Channel Messages View */
                 <>
                   {/* Messages Area */}
-                  <div className="flex-1 overflow-y-auto p-6">
+                  <div className="flex-1 overflow-y-auto p-4">
                     {selectedChannel && channelMessages[selectedChannel.id]?.length > 0 ? (
-                      <div className="space-y-6">
+                      <div className="space-y-3">
                         {channelMessages[selectedChannel.id].map((message) => (
-                          <div key={message.id} className="flex items-start space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
+                          <div key={message.id} className="flex items-start space-x-2">
+                            <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
                               {message.sender_name.charAt(0)}
                             </div>
                             <div className="flex-1">
                               <div className="flex items-center space-x-2 mb-1">
-                                <span className="font-semibold text-gray-900">{message.sender_name}</span>
+                                <span className="text-sm font-semibold text-gray-900">{message.sender_name}</span>
                                 <span className="text-xs text-gray-500">{formatTime(new Date(message.created_at))}</span>
                                 {message.is_edited && <span className="text-xs text-gray-400">(edited)</span>}
                               </div>
-                              <div className="text-gray-800">{message.content}</div>
+                              <div className="text-sm text-gray-800">{message.content}</div>
 
                               {/* Message Reactions */}
                               {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
@@ -2632,7 +2841,7 @@ export const Chat: React.FC = () => {
                         <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
                           <Hash className="w-12 h-12 text-gray-400" />
                         </div>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        <h3 className="text-base font-semibold text-gray-900 mb-2">
                           Welcome to #{selectedChannel.name}
                         </h3>
                         <p className="text-gray-600 max-w-md">
@@ -2701,7 +2910,7 @@ export const Chat: React.FC = () => {
                         <button
                           onClick={handleSendMessage}
                           disabled={!messageInput.trim()}
-                          className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
+                          className="px-2 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
                         >
                           <Send className="w-4 h-4" />
                         </button>
@@ -2713,9 +2922,9 @@ export const Chat: React.FC = () => {
                 /* Posts View for Channel */
                 <div className="flex-1 overflow-y-auto">
                   {/* Create Post */}
-                  <div className="p-6 border-b border-gray-200">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
+                  <div className="p-4 border-b border-gray-200">
+                    <div className="flex items-start space-x-2">
+                      <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
                         {user?.email?.charAt(0).toUpperCase() || 'U'}
                       </div>
                       <div className="flex-1">
@@ -2773,7 +2982,7 @@ export const Chat: React.FC = () => {
                               </button>
                             </div>
                             <button 
-                              className="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                              className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
                               disabled={!channelPostContent.trim() || !selectedChannel}
                               onClick={async () => {
                                 if (!channelPostContent.trim() || !selectedChannel) return;
@@ -2824,18 +3033,18 @@ export const Chat: React.FC = () => {
                   </div>
 
                   {/* Channel Posts List */}
-                  <div className="flex-1 p-6">
+                  <div className="flex-1 p-4">
                     {selectedChannel && channelPosts[selectedChannel.id]?.length > 0 ? (
                       channelPosts[selectedChannel.id].map((post: any) => (
-                        <div key={post.id} className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
-                          <div className="flex items-start space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                        <div key={post.id} className="bg-white border border-gray-200 rounded-lg p-4 mb-3">
+                          <div className="flex items-start space-x-2">
+                            <div className="w-8 h-8 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
                               {(post.author_name || 'U').charAt(0).toUpperCase()}
                             </div>
                             <div className="flex-1">
                               <div className="flex items-center space-x-2 mb-2">
-                                <span className="font-semibold text-gray-900">{post.author_name || 'Unknown'}</span>
-                                <span className="text-sm text-gray-500">
+                                <span className="font-semibold text-sm text-gray-900">{post.author_name || 'Unknown'}</span>
+                                <span className="text-xs text-gray-500">
                                   {formatTime(post.created_at)}
                                 </span>
                                 <span className={`px-2 py-1 text-xs font-medium rounded flex items-center ${
@@ -2856,12 +3065,12 @@ export const Chat: React.FC = () => {
                               </div>
                               
                               {post.title && (
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                <h3 className="text-base font-semibold text-gray-900 mb-2">
                                   {post.title}
                                 </h3>
                               )}
                               
-                              <div className="text-gray-800 space-y-2">
+                              <div className="text-sm text-gray-800 space-y-2">
                                 <p>{post.content}</p>
                               </div>
 
@@ -3015,7 +3224,7 @@ export const Chat: React.FC = () => {
                           <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                             <MessageSquare className="w-12 h-12 text-gray-400" />
                           </div>
-                          <h3 className="text-lg font-semibold text-gray-900 mb-2">No posts yet</h3>
+                          <h3 className="text-md font-semibold text-gray-900 mb-2">No posts yet</h3>
                           <p className="text-gray-600">Be the first to post in this channel</p>
                         </div>
                       </div>
@@ -3026,7 +3235,7 @@ export const Chat: React.FC = () => {
             </div>
           ) : activeSidebarItem === 'dm' && selectedDM ? (
             <div className="flex-1 flex flex-col bg-white h-full overflow-hidden">
-              <div className="border-b border-gray-200 bg-white">
+              <div className="border-b border-gray-200 bg-white flex-shrink-0">
                 <div className="px-4 py-2 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <div className="relative">
@@ -3039,7 +3248,7 @@ export const Chat: React.FC = () => {
                       <h2 className="text-base font-semibold text-gray-900">
                         {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
                       </h2>
-                      <p className="text-xs text-gray-500">
+                      <p className="text-sm text-gray-500">
                         {onlineUsers.has(selectedDM) ? 'Active now' : 'Offline'}
                       </p>
                     </div>
@@ -3070,29 +3279,26 @@ export const Chat: React.FC = () => {
               </div>
               <div 
                 ref={messagesContainerRef}
-                className={`flex-1 overflow-y-auto p-3 relative min-h-0 ${dragActive ? 'bg-blue-50 border-2 border-dashed border-blue-300' : ''}`}
+                className={`flex-1 overflow-y-auto relative min-h-0 ${dragActive ? 'bg-blue-50 border-2 border-dashed border-blue-300' : ''}`}
+                style={{scrollbarWidth: 'none', msOverflowStyle: 'none'}}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
-                style={{ 
-                  height: 'calc(100vh - 180px)',
-                  scrollBehavior: 'smooth'
-                }}
               >
                 {currentMessages.length > 0 ? (
-                  <div className="space-y-3">
+                  <div>
                     {currentMessages.map((message) => (
-                      <div key={message.id} className="flex items-start space-x-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-xs">
+                      <div key={message.id} className="flex items-start space-x-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50">
+                        <div className="w-6 h-6 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-xs">
                           {(message.sender_name || message.userName || 'U').charAt(0)}
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center space-x-2 mb-1">
-                            <span className="font-medium text-gray-900 text-sm">{message.sender_name || message.userName}</span>
+                            <span className="font-medium text-gray-900 text-xs">{message.sender_name || message.userName}</span>
                             <span className="text-xs text-gray-500">{formatTime(message.created_at || message.timestamp)}</span>
                             {(message.is_edited || message.edited) && <span className="text-xs text-gray-400">(edited)</span>}
                           </div>
-                          <div className="text-gray-800 text-sm">
+                          <div className="text-gray-800 text-xs">
                             {message.message_type === 'file' ? renderFileFromDB(message) : renderFileMessage(message.content)}
                           </div>
 
@@ -3157,7 +3363,7 @@ export const Chat: React.FC = () => {
                     <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
                       <MessageSquare className="w-12 h-12 text-gray-400" />
                     </div>
-                    <h3 className="text-base font-semibold text-gray-900 mb-2">
+                    <h3 className="text-sm font-semibold text-gray-900 mb-2">
                       Start a conversation
                     </h3>
                     <p className="text-sm text-gray-600 max-w-md">
@@ -3177,22 +3383,13 @@ export const Chat: React.FC = () => {
                   </div>
                 )}
 
-                {/* Scroll to bottom button */}
-                {showScrollToBottom && (
-                  <button
-                    onClick={scrollToBottomManual}
-                    className="absolute bottom-4 right-4 p-2 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors z-20"
-                    title="Scroll to bottom"
-                  >
-                    <ScrollDown className="w-4 h-4" />
-                  </button>
-                )}
+                {/* Scroll to bottom button removed */}
               </div>
 
               {/* Message Input */}
-              <div className="border-t border-gray-200 bg-white p-2">
+              <div className="border-t border-gray-200 bg-white p-1.5 flex-shrink-0">
                 <div className="bg-white border border-gray-300 rounded-lg">
-                  <div className="flex items-center p-2">
+                  <div className="flex items-center p-1.5">
                     <input
                       type="text"
                       value={messageInput}
@@ -3202,10 +3399,10 @@ export const Chat: React.FC = () => {
                       className="flex-1 text-gray-900 placeholder-gray-500 focus:outline-none"
                     />
                   </div>
-                  <div className="flex items-center justify-between px-3 pb-3">
+                  <div className="flex items-center justify-between px-2 pb-2">
                     <div className="flex items-center space-x-1">
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
-                        <Plus className="w-4 h-4" />
+                      <button className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                        <Plus className="w-3 h-3" />
                       </button>
                       <div className="h-4 w-px bg-gray-300 mx-1" />
                       <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
@@ -3270,7 +3467,7 @@ export const Chat: React.FC = () => {
             <div className="flex-1 flex flex-col bg-white">
               {/* Posts Header */}
               <div className="px-4 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">Posts</h2>
+                <h2 className="text-base font-semibold text-gray-900">Posts</h2>
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
@@ -3279,13 +3476,13 @@ export const Chat: React.FC = () => {
                         loadChannelPosts(selectedChannel.id);
                       }
                     }}
-                    className="px-3 py-2 bg-gray-500 text-white text-sm font-medium rounded-lg hover:bg-gray-600 transition-colors"
+                    className="px-2 py-1.5 bg-gray-500 text-white text-xs font-medium rounded hover:bg-gray-600 transition-colors"
                   >
                     Refresh
                   </button>
                   <button 
                     onClick={() => setShowNewPostModal(true)}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors"
                   >
                     New Post
                   </button>
@@ -3293,10 +3490,10 @@ export const Chat: React.FC = () => {
               </div>
 
               {/* Posts Content */}
-              <div className="flex-1 overflow-y-auto max-h-[75vh]">
+              <div className="flex-1 overflow-y-auto h-full" style={{scrollbarWidth: 'auto'}}>
                 {/* Create Post Section */}
-                <div className="p-4 border-b border-gray-200 bg-gray-50">
-                  <div className="flex items-start space-x-3">
+                <div className="py-2 px-0 border-b border-gray-200 bg-gray-50">
+                  <div className="flex items-start space-x-3 px-4">
                     <div className="w-10 h-10 rounded-full overflow-hidden">
                       <img 
                         src="https://res.cloudinary.com/dwf0ywsoq/image/upload/v1756368405/magicteams_k6b5jh.png" 
@@ -3423,19 +3620,20 @@ export const Chat: React.FC = () => {
                 </div>
 
                 {/* Posts List */}
-                <div className="p-6">
+                <div className="py-2 px-0">
+                  <div className="px-4">
                   {selectedChannel ? (
                     channelPosts[selectedChannel.id]?.length > 0 ? (
                       channelPosts[selectedChannel.id].map((post: any) => (
-                        <div key={post.id} className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
+                        <div key={post.id} className="bg-white border border-gray-200 rounded-lg p-3 mb-2">
                           <div className="flex items-start space-x-3">
                             <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
                               {(post.author_name || 'U').charAt(0).toUpperCase()}
                             </div>
                             <div className="flex-1">
                               <div className="flex items-center space-x-2 mb-2">
-                                <span className="font-semibold text-gray-900">{post.author_name || 'Unknown'}</span>
-                                <span className="text-sm text-gray-500">
+                                <span className="font-semibold text-sm text-gray-900">{post.author_name || 'Unknown'}</span>
+                                <span className="text-xs text-gray-500">
                                   in #{selectedChannel.name} • {formatTime(post.created_at)} •
                                 </span>
                                 <span className={`px-2 py-1 text-xs font-medium rounded flex items-center ${
@@ -3456,12 +3654,12 @@ export const Chat: React.FC = () => {
                               </div>
                               
                               {post.title && (
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                <h3 className="text-base font-semibold text-gray-900 mb-2">
                                   {post.title}
                                 </h3>
                               )}
                               
-                              <div className="text-gray-800 space-y-2">
+                              <div className="text-sm text-gray-800 space-y-2">
                                 <p>{post.content}</p>
                               </div>
 
@@ -3631,6 +3829,7 @@ export const Chat: React.FC = () => {
                       </p>
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
 
@@ -3730,18 +3929,18 @@ export const Chat: React.FC = () => {
             </div>
           ) : activeSidebarItem === 'replies' ? (
             /* Replies Content */
-            <div className="flex-1 flex flex-col bg-white">
+            <div className="flex-1 flex flex-col bg-white overflow-hidden h-full">
               {/* Replies Header */}
-              <div className="px-6 py-4 border-b border-gray-200 bg-white">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-semibold text-gray-900">Replies</h2>
+              <div className="px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-lg font-semibold text-gray-900">Replies</h2>
                 </div>
                 
                 {/* Unread/Read Tabs - Discord Style */}
-                <div className="flex space-x-6">
+                <div className="flex space-x-4">
                   <button
                     onClick={() => setRepliesTab('unread')}
-                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                    className={`pb-1 text-xs font-medium border-b-2 transition-colors ${
                       repliesTab === 'unread'
                         ? 'text-gray-900 border-blue-600'
                         : 'text-gray-500 border-transparent hover:text-gray-700'
@@ -3751,7 +3950,7 @@ export const Chat: React.FC = () => {
                   </button>
                   <button
                     onClick={() => setRepliesTab('read')}
-                    className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                    className={`pb-1 text-xs font-medium border-b-2 transition-colors ${
                       repliesTab === 'read'
                         ? 'text-gray-900 border-blue-600'
                         : 'text-gray-500 border-transparent hover:text-gray-700'
@@ -3763,33 +3962,33 @@ export const Chat: React.FC = () => {
               </div>
 
               {/* Content Area */}
-              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+              <div className="flex-1 overflow-hidden h-0">
                 {repliesTab === 'unread' ? (
                   /* Unread Replies List */
-                  <div className="p-4">
+                  <div className="h-full overflow-y-auto" style={{scrollbarWidth: 'none', msOverflowStyle: 'none'}}>
                     {unreadReplies.length > 0 ? (
-                      <div className="space-y-4">
+                      <div>
                         {unreadReplies.map((reply: any) => (
-                          <div key={reply.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer"
+                          <div key={reply.id} className="bg-white border-b border-gray-200 px-3 py-3 hover:bg-gray-50 cursor-pointer"
                                onClick={() => handleNavigateToMessage(reply)}>
-                            <div className="flex items-start space-x-3">
-                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                            <div className="flex items-start space-x-2">
+                              <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-medium">
                                 {reply.sender_name?.charAt(0) || 'U'}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between mb-1">
-                                  <p className="text-sm font-medium text-gray-900">
+                                  <p className="text-xs font-medium text-gray-900">
                                     {reply.sender_name || 'Unknown User'}
                                   </p>
                                   <p className="text-xs text-gray-500">
                                     {new Date(reply.created_at).toLocaleString()}
                                   </p>
                                 </div>
-                                <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                <p className="text-xs text-gray-600 mb-1 line-clamp-2">
                                   {reply.content}
                                 </p>
                                 <div className="flex items-center text-xs text-gray-500">
-                                  <span className="bg-gray-100 px-2 py-1 rounded">
+                                  <span className="bg-gray-100 px-1 py-0.5 rounded text-xs">
                                     {reply.message_type === 'channel' ? `#${reply.location_name}` : reply.location_name}
                                   </span>
                                   <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded">
@@ -3803,11 +4002,11 @@ export const Chat: React.FC = () => {
                       </div>
                     ) : (
                       /* Empty State */
-                      <div className="flex-1 flex flex-col items-center justify-center p-12">
+                      <div className="flex-1 flex flex-col items-center justify-center p-6">
                         <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                           <Reply className="w-8 h-8 text-gray-400" />
                         </div>
-                        <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
+                        <h3 className="text-base font-semibold text-gray-900 mb-2">You're all caught up</h3>
                         <p className="text-gray-600 text-center mb-6">
                           Looks like you don't have any unread replies
                         </p>
@@ -3816,30 +4015,30 @@ export const Chat: React.FC = () => {
                   </div>
                 ) : (
                   /* Read Replies List */
-                  <div className="p-4">
+                  <div className="h-full overflow-y-auto" style={{scrollbarWidth: 'none', msOverflowStyle: 'none'}}>
                     {readReplies.length > 0 ? (
-                      <div className="space-y-4">
+                      <div>
                         {readReplies.map((reply: any) => (
-                          <div key={reply.id} className="bg-white border border-gray-200 rounded-lg p-4 opacity-75 hover:bg-gray-50 cursor-pointer"
+                          <div key={reply.id} className="bg-white border-b border-gray-200 px-3 py-3 opacity-75 hover:bg-gray-50 cursor-pointer"
                                onClick={() => handleNavigateToMessage(reply)}>
-                            <div className="flex items-start space-x-3">
-                              <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                            <div className="flex items-start space-x-2">
+                              <div className="w-6 h-6 bg-gray-400 rounded-full flex items-center justify-center text-white text-xs font-medium">
                                 {reply.sender_name?.charAt(0) || 'U'}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between mb-1">
-                                  <p className="text-sm font-medium text-gray-700">
+                                  <p className="text-xs font-medium text-gray-700">
                                     {reply.sender_name || 'Unknown User'}
                                   </p>
                                   <p className="text-xs text-gray-500">
                                     {new Date(reply.created_at).toLocaleString()}
                                   </p>
                                 </div>
-                                <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                <p className="text-xs text-gray-600 mb-1 line-clamp-2">
                                   {reply.content}
                                 </p>
                                 <div className="flex items-center text-xs text-gray-500">
-                                  <span className="bg-gray-100 px-2 py-1 rounded">
+                                  <span className="bg-gray-100 px-1 py-0.5 rounded text-xs">
                                     {reply.message_type === 'channel' ? `#${reply.location_name}` : reply.location_name}
                                   </span>
                                   <span className="ml-2 bg-gray-200 text-gray-600 px-2 py-1 rounded">
@@ -3853,11 +4052,11 @@ export const Chat: React.FC = () => {
                       </div>
                     ) : (
                       /* Empty State */
-                      <div className="flex-1 flex flex-col items-center justify-center p-12">
+                      <div className="flex-1 flex flex-col items-center justify-center p-6">
                         <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                           <Reply className="w-8 h-8 text-gray-400" />
                         </div>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">No read replies</h3>
+                        <h3 className="text-md font-semibold text-gray-900 mb-2">No read replies</h3>
                         <p className="text-gray-600 text-center max-w-sm">
                           Previously read replies will appear here.
                         </p>
@@ -3871,8 +4070,8 @@ export const Chat: React.FC = () => {
             /* FollowUps Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* FollowUps Header */}
-              <div className="px-6 py-4 border-b border-gray-200 bg-white">
-                <h2 className="text-xl font-semibold text-gray-900 mb-4">FollowUps</h2>
+              <div className="px-4 py-2 border-b border-gray-200 bg-white">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">FollowUps</h2>
                 
                 {/* Search Bar */}
                 <div className="relative mb-4">
@@ -3888,60 +4087,198 @@ export const Chat: React.FC = () => {
 
                 {/* Filter Buttons */}
                 <div className="flex items-center space-x-3">
-                  <button className="px-3 py-1.5 bg-blue-100 text-blue-700 text-sm font-medium rounded-full flex items-center">
-                    <div className="w-2 h-2 bg-blue-600 rounded-full mr-2"></div>
-                    Assigned to: You
+                  <button 
+                    onClick={() => setShowAssignmentModal(true)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-full flex items-center transition-colors ${
+                      followupsFilter === 'assigned' 
+                        ? 'bg-blue-100 text-blue-700' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <div className={`w-2 h-2 rounded-full mr-2 ${
+                      followupsFilter === 'assigned' ? 'bg-blue-600' : 'bg-gray-400'
+                    }`}></div>
+                    Assigned to: {selectedAssignee ? selectedAssignee.name || selectedAssignee.email.split('@')[0] : 'You'}
                   </button>
-                  <button className="px-3 py-1.5 bg-green-100 text-green-700 text-sm font-medium rounded-full flex items-center">
+                  <button 
+                    onClick={() => setFollowupsFilter(followupsFilter === 'resolved' ? 'assigned' : 'resolved')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-full flex items-center transition-colors ${
+                      followupsFilter === 'resolved' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
                     <span className="mr-1">✓</span>
                     Resolved
                   </button>
                 </div>
               </div>
 
-              {/* Empty State */}
-              <div className="flex-1 flex flex-col items-center justify-center p-6">
-                <div className="w-24 h-24 mb-6 relative">
-                  <div className="w-24 h-24 bg-gray-200 rounded-2xl flex items-center justify-center">
-                    <div className="w-12 h-12 bg-gray-300 rounded-lg flex items-center justify-center">
-                      <div className="space-y-1">
-                        <div className="flex space-x-1">
-                          <div className="w-1 h-1 bg-gray-500 rounded-full"></div>
-                          <div className="w-2 h-1 bg-gray-500 rounded-full"></div>
+              {/* Tasks Content */}
+              <div className="flex-1 overflow-y-auto">
+                {followupsFilter === 'assigned' ? (
+                  /* Assigned Tasks */
+                  <div className="p-4">
+                    {assignedTasks.length > 0 ? (
+                      assignedTasks.map((task: any) => (
+                        <div key={task.id} className="bg-white border border-gray-200 rounded-lg p-4 mb-3">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h4 className="text-sm font-medium text-gray-900 mb-1">
+                                {task.task_description || task.description}
+                              </h4>
+                              <div className="text-xs text-gray-500 mb-2">
+                                Assigned by: {task.assigned_by_profile?.full_name || task.assignedBy?.email || 'Unknown'}
+                              </div>
+                              <div className="text-xs text-gray-400">
+                                {new Date(task.created_at || task.createdAt).toLocaleString()}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => resolveTask(task.id)}
+                              className="px-3 py-1 bg-green-100 text-green-700 text-xs font-medium rounded hover:bg-green-200 transition-colors"
+                            >
+                              Mark Resolved
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex space-x-1">
-                          <div className="w-1 h-1 bg-gray-500 rounded-full"></div>
-                          <div className="w-2 h-1 bg-gray-500 rounded-full"></div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Users className="w-8 h-8 text-gray-400" />
                         </div>
-                        <div className="flex space-x-1">
-                          <div className="w-1 h-1 bg-gray-500 rounded-full"></div>
-                          <div className="w-2 h-1 bg-gray-500 rounded-full"></div>
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No assigned tasks</h3>
+                        <p className="text-gray-500">Tasks assigned to you will appear here</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Resolved Tasks */
+                  <div className="p-4">
+                    {resolvedTasks.length > 0 ? (
+                      resolvedTasks.map((task: any) => (
+                        <div key={task.id} className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-3 opacity-75">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h4 className="text-sm font-medium text-gray-700 mb-1">
+                                {task.task_description || task.description}
+                              </h4>
+                              <div className="text-xs text-gray-500 mb-2">
+                                Assigned by: {task.assigned_by_profile?.full_name || task.assignedBy?.email || 'Unknown'}
+                              </div>
+                              <div className="text-xs text-gray-400">
+                                Resolved: {new Date(task.resolved_at || task.resolvedAt).toLocaleString()}
+                              </div>
+                            </div>
+                            <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded">
+                              ✓ Resolved
+                            </span>
+                          </div>
                         </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Users className="w-8 h-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No resolved tasks</h3>
+                        <p className="text-gray-500">Completed tasks will appear here</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Assignment Modal */}
+              {showAssignmentModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-lg max-w-md w-full max-h-96">
+                    <div className="px-6 py-4 border-b border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-semibold text-gray-900">Assign Task</h3>
+                        <button
+                          onClick={() => setShowAssignmentModal(false)}
+                          className="text-gray-400 hover:text-gray-500"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="p-6">
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Select Team Member
+                        </label>
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {teamMembers.length > 0 ? teamMembers.map(member => (
+                            <button
+                              key={member.id}
+                              onClick={() => setSelectedAssignee(member)}
+                              className={`w-full flex items-center p-3 rounded-lg border transition-colors ${
+                                selectedAssignee?.id === member.id
+                                  ? 'bg-blue-50 border-blue-200 text-blue-900'
+                                  : 'bg-white border-gray-200 hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold mr-3">
+                                {(member.name || member.email).charAt(0).toUpperCase()}
+                              </div>
+                              <div className="text-left">
+                                <div className="font-medium text-sm">
+                                  {member.name || member.email.split('@')[0]}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {member.email}
+                                </div>
+                              </div>
+                            </button>
+                          )) : (
+                            <div className="text-center py-4 text-gray-500 text-sm">
+                              No team members found
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end space-x-3">
+                        <button
+                          onClick={() => setShowAssignmentModal(false)}
+                          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (selectedAssignee) {
+                              setFollowupsFilter('assigned');
+                              setShowAssignmentModal(false);
+                            }
+                          }}
+                          disabled={!selectedAssignee}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Select
+                        </button>
                       </div>
                     </div>
                   </div>
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">You're all caught up</h3>
-                <p className="text-gray-600 text-center mb-6 max-w-sm">
-                  Looks like you don't have any assigned messages
-                </p>
-                <button className="px-6 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium">
-                  Clear filters
-                </button>
-              </div>
+              )}
             </div>
           ) : activeSidebarItem === 'activity' ? (
             /* Activity Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Activity Header */}
-              <div className="px-6 py-4 border-b border-gray-200 bg-white">
-                <h2 className="text-xl font-semibold text-gray-900 mb-4">Activity</h2>
+              <div className="px-4 py-2 border-b border-gray-200 bg-white">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Activity</h2>
                 
                 {/* Filter Tabs */}
                 <div className="flex space-x-1">
                   <button
                     onClick={() => setActivityTab('mentions')}
-                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                    className={`flex items-center space-x-2 px-2 py-1 text-xs font-medium rounded-full transition-colors ${
                       activityTab === 'mentions'
                         ? 'bg-blue-100 text-blue-800'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -3952,7 +4289,7 @@ export const Chat: React.FC = () => {
                   </button>
                   <button
                     onClick={() => setActivityTab('reactions')}
-                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                    className={`flex items-center space-x-2 px-2 py-1 text-xs font-medium rounded-full transition-colors ${
                       activityTab === 'reactions'
                         ? 'bg-blue-100 text-blue-800'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -3963,7 +4300,7 @@ export const Chat: React.FC = () => {
                   </button>
                   <button
                     onClick={() => setActivityTab('assigned')}
-                    className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                    className={`flex items-center space-x-2 px-2 py-1 text-xs font-medium rounded-full transition-colors ${
                       activityTab === 'assigned'
                         ? 'bg-blue-100 text-blue-800'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -3984,7 +4321,7 @@ export const Chat: React.FC = () => {
                       <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <AtSign className="w-8 h-8 text-gray-400" />
                       </div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No mentions yet</h3>
+                      <h3 className="text-md font-semibold text-gray-900 mb-2">No mentions yet</h3>
                       <p className="text-gray-600 text-center max-w-sm">
                         When someone mentions you, it will appear here.
                       </p>
@@ -4008,23 +4345,23 @@ export const Chat: React.FC = () => {
                           };
 
                           return (
-                            <div key={reaction.id} className="flex items-start space-x-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                              <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                            <div key={reaction.id} className="flex items-start space-x-2 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                              <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
                                 {(reaction.profile?.full_name || reaction.profile?.email || 'U').charAt(0).toUpperCase()}
                               </div>
                               <div className="flex-1">
                                 <div className="flex items-center space-x-2 mb-1">
-                                  <span className="font-semibold text-gray-900">
+                                  <span className="text-xs font-semibold text-gray-900">
                                     {reaction.profile?.full_name || reaction.profile?.email || 'Unknown'}
                                   </span>
-                                  <span className="text-gray-500">reacted with</span>
+                                  <span className="text-xs text-gray-500">reacted with</span>
                                   <span className="flex items-center space-x-1">
                                     {getReactionIcon(reaction.reaction_type)}
-                                    <span className="text-sm font-medium">
+                                    <span className="text-xs font-medium">
                                       {reaction.reaction_type}
                                     </span>
                                   </span>
-                                  <span className="text-gray-500">to your post</span>
+                                  <span className="text-xs text-gray-500">to your post</span>
                                 </div>
                                 <div className="text-sm text-gray-600 mb-2">
                                   in <span className="font-medium">#{reaction.channel?.name || 'unknown'}</span> • {formatTime(reaction.created_at)}
@@ -4050,7 +4387,7 @@ export const Chat: React.FC = () => {
                           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                             <span className="text-2xl">😊</span>
                           </div>
-                          <h3 className="text-lg font-semibold text-gray-900 mb-2">No reactions yet</h3>
+                          <h3 className="text-md font-semibold text-gray-900 mb-2">No reactions yet</h3>
                           <p className="text-gray-600 text-center max-w-sm">
                             When people react to your posts, it will appear here.
                           </p>
@@ -4065,7 +4402,7 @@ export const Chat: React.FC = () => {
                       <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <UserPlus className="w-8 h-8 text-gray-400" />
                       </div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">No assignments yet</h3>
+                      <h3 className="text-md font-semibold text-gray-900 mb-2">No assignments yet</h3>
                       <p className="text-gray-600 text-center max-w-sm">
                         When tasks are assigned to you, they will appear here.
                       </p>
@@ -4078,18 +4415,18 @@ export const Chat: React.FC = () => {
             /* Drafts & Sent Page Content */
             <div className="flex-1 flex flex-col bg-white">
               {/* Header */}
-              <div className="px-6 py-4 border-b border-gray-200 bg-white">
-                <div className="flex items-center space-x-3 mb-4">
-                  <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
-                    <Edit3 className="w-4 h-4 text-white" />
+              <div className="px-4 py-2 border-b border-gray-200 bg-white">
+                <div className="flex items-center space-x-3 mb-3">
+                  <div className="w-6 h-6 bg-purple-600 rounded-full flex items-center justify-center">
+                    <Edit3 className="w-3 h-3 text-white" />
                   </div>
-                  <h2 className="text-xl font-semibold text-gray-900">Sent Messages</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Sent Messages</h2>
                 </div>
                 
               </div>
 
               {/* Search Bar */}
-              <div className="px-6 py-4 border-b border-gray-200">
+              <div className="px-4 py-2 border-b border-gray-200">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
@@ -4103,7 +4440,7 @@ export const Chat: React.FC = () => {
               </div>
 
               {/* Sent by filter */}
-              <div className="px-6 py-2 bg-gray-50">
+              <div className="px-4 py-1 bg-gray-50">
                 <div className="flex items-center space-x-2">
                   <div className="relative">
                     <button
@@ -4905,64 +5242,7 @@ export const Chat: React.FC = () => {
         </div>
       )}
 
-      {/* File Preview Modal */}
-      {showFilePreview && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Share Files</h3>
-              <button
-                onClick={() => {
-                  setShowFilePreview(false);
-                  setSelectedFiles([]);
-                }}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="space-y-3 mb-4 max-h-60 overflow-y-auto">
-              {selectedFiles.map((file, index) => (
-                <div key={index} className="flex items-center space-x-3 p-2 bg-gray-50 rounded">
-                  <div className="p-2 bg-gray-200 rounded">
-                    {getFileIcon(file.type)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                    <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
-                  </div>
-                  <button
-                    onClick={() => setSelectedFiles(files => files.filter((_, i) => i !== index))}
-                    className="text-red-500 hover:text-red-700"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            
-            <div className="flex space-x-3">
-              <button
-                onClick={() => {
-                  setShowFilePreview(false);
-                  setSelectedFiles([]);
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={sendFilesMessage}
-                disabled={uploadingFiles || selectedFiles.length === 0}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {uploadingFiles ? 'Uploading...' : `Send ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Removed duplicate File Preview Modal - keeping only the main one above */}
 
       {/* Incoming Call Notification */}
       {incomingCall && (
