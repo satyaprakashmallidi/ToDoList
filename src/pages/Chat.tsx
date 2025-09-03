@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import EmojiPicker from 'emoji-picker-react';
 import { 
   Hash, 
   ChevronDown, 
@@ -42,7 +41,14 @@ import {
   Angry,
   ThumbsUp,
   Download,
-  ChevronDown as ScrollDown
+  ChevronDown as ScrollDown,
+  MicOff,
+  VideoOff,
+  Monitor,
+  MonitorSpeaker,
+  Phone,
+  PhoneOff,
+  Info
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useChannels } from '../hooks/useChannels';
@@ -197,6 +203,28 @@ export const Chat: React.FC = () => {
   // Scroll state
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Call notifications state
+  const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [activeCall, setActiveCall] = useState<any>(null);
+  const [callNotifications, setCallNotifications] = useState<any[]>([]);
+  const callNotificationChannelRef = useRef<any>(null);
+  
+  // Video call state
+  const [showVideoCall, setShowVideoCall] = useState(false);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isVideoMuted, setIsVideoMuted] = useState(false);
+  const [isAudioMuted, setIsAudioMuted] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [showMeetInfo, setShowMeetInfo] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [meetStartTime, setMeetStartTime] = useState<Date | null>(null);
+  const [callDuration, setCallDuration] = useState('00:00');
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const callDurationInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Sidebar items for replies section
   const sidebarItems: SidebarItem[] = [
@@ -1205,6 +1233,19 @@ export const Chat: React.FC = () => {
     checkMediaPermissions();
   }, []);
 
+  // Set up call notifications
+  useEffect(() => {
+    if (user) {
+      setupCallNotifications();
+    }
+    
+    return () => {
+      if (callNotificationChannelRef.current) {
+        callNotificationChannelRef.current.unsubscribe();
+      }
+    };
+  }, [user]);
+
   const handleSendMessage = async () => {
     if (!messageInput.trim()) return;
 
@@ -1452,22 +1493,126 @@ export const Chat: React.FC = () => {
     setShowEmojiPicker(!showEmojiPicker);
   };
 
-  const onEmojiSelect = (emojiData: any) => {
-    setMessageInput(prev => prev + emojiData.emoji);
+  const onEmojiSelect = (emoji: string) => {
+    setMessageInput(prev => prev + emoji);
     setShowEmojiPicker(false);
   };
 
-  // Close emoji picker when clicking outside
+  const onEmojiReact = async (messageId: string, emoji: string) => {
+    if (!user) return;
+    
+    setMessageReactions(prev => {
+      const messageReacts = prev[messageId] || [];
+      const existingReaction = messageReacts.find(r => r.emoji === emoji);
+      
+      if (existingReaction) {
+        // Toggle reaction
+        if (existingReaction.users.includes(user.id)) {
+          // Remove user's reaction
+          existingReaction.count--;
+          existingReaction.users = existingReaction.users.filter(id => id !== user.id);
+          if (existingReaction.count === 0) {
+            return {
+              ...prev,
+              [messageId]: messageReacts.filter(r => r.emoji !== emoji)
+            };
+          }
+        } else {
+          // Add user's reaction
+          existingReaction.count++;
+          existingReaction.users.push(user.id);
+        }
+      } else {
+        // Create new reaction
+        messageReacts.push({
+          emoji,
+          count: 1,
+          users: [user.id]
+        });
+      }
+      
+      return {
+        ...prev,
+        [messageId]: [...messageReacts]
+      };
+    });
+    
+    setShowReactionPicker(null);
+  };
+
+  // Comprehensive emoji categories
+  const emojiCategories = {
+    'Recently Used': ['😀', '❤️', '👍', '😂', '🔥', '✨'],
+    'Smileys': [
+      '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇',
+      '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚',
+      '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩',
+      '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣',
+      '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬'
+    ],
+    'Gestures': [
+      '👋', '🤚', '🖐️', '✋', '🖖', '👌', '🤏', '✌️', '🤞', '🤟',
+      '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎',
+      '👊', '✊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏'
+    ],
+    'People': [
+      '👶', '🧒', '👦', '👧', '🧑', '👱', '👨', '🧔', '👩', '🧓',
+      '👴', '👵', '👮', '👷', '💂', '🕵️', '👩‍⚕️', '👨‍⚕️', '👩‍🌾', '👨‍🌾',
+      '👩‍🍳', '👨‍🍳', '👩‍🎓', '👨‍🎓', '👩‍🎤', '👨‍🎤', '👩‍🏫', '👨‍🏫', '👩‍🏭', '👨‍🏭'
+    ],
+    'Animals': [
+      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯',
+      '🦁', '🐮', '🐷', '🐽', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒',
+      '🐔', '🐧', '🐦', '🐤', '🐣', '🐥', '🦆', '🦅', '🦉', '🦇'
+    ],
+    'Food': [
+      '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈', '🍒',
+      '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🥬',
+      '🥒', '🌶️', '🌽', '🥕', '🧄', '🧅', '🥔', '🍠', '🥐', '🍞'
+    ],
+    'Activities': [
+      '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱',
+      '🪀', '🏓', '🏸', '🏒', '🏑', '🥍', '🏏', '⛳', '🪁', '🏹',
+      '🎣', '🤿', '🥊', '🥋', '🎽', '🛹', '🛷', '⛸️', '🥌', '🎿'
+    ],
+    'Objects': [
+      '⌚', '📱', '📲', '💻', '⌨️', '🖥️', '🖨️', '🖱️', '🖲️', '🕹️',
+      '🗜️', '💽', '💾', '💿', '📀', '📼', '📷', '📸', '📹', '🎥',
+      '📽️', '🎞️', '📞', '☎️', '📟', '📠', '📺', '📻', '🎙️', '🎚️'
+    ],
+    'Symbols': [
+      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔',
+      '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '♥️',
+      '💯', '💢', '💥', '💫', '💦', '💨', '🕳️', '💬', '👁️‍🗨️', '🗨️'
+    ],
+    'Flags': [
+      '🏁', '🚩', '🎌', '🏴', '🏳️', '🏳️‍🌈', '🏳️‍⚧️', '🇦🇫', '🇦🇽', '🇦🇱',
+      '🇩🇿', '🇦🇸', '🇦🇩', '🇦🇴', '🇦🇮', '🇦🇶', '🇦🇬', '🇦🇷', '🇦🇲', '🇦🇼'
+    ]
+  };
+
+  // Current emoji category
+  const [currentEmojiCategory, setCurrentEmojiCategory] = useState('Recently Used');
+
+  // Message reaction states
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  const [messageReactions, setMessageReactions] = useState<{[messageId: string]: {emoji: string; count: number; users: string[]}[]}>({});
+
+  // Close emoji picker and reaction picker when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (showEmojiPicker && !(event.target as Element).closest('.emoji-picker-container')) {
         setShowEmojiPicker(false);
       }
+      if (showReactionPicker && !(event.target as Element).closest('.reaction-picker') && 
+          !(event.target as Element).closest('[title="Add reaction"]')) {
+        setShowReactionPicker(null);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showEmojiPicker]);
+  }, [showEmojiPicker, showReactionPicker]);
 
   // Handle scroll detection for scroll-to-bottom button
   useEffect(() => {
@@ -1488,6 +1633,343 @@ export const Chat: React.FC = () => {
   const scrollToBottomManual = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     setShowScrollToBottom(false);
+  };
+
+  // Call notification functions
+  const setupCallNotifications = () => {
+    if (!user) return;
+
+    // Cleanup existing subscription
+    if (callNotificationChannelRef.current) {
+      callNotificationChannelRef.current.unsubscribe();
+    }
+
+    // Subscribe to incoming call notifications
+    const channel = supabase
+      .channel('call_notifications')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'call_notifications',
+        filter: `receiver_id=eq.${user.id}`
+      }, (payload) => {
+        console.log('Incoming call notification:', payload.new);
+        setIncomingCall(payload.new);
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE', 
+        schema: 'public',
+        table: 'call_sessions',
+        filter: `caller_id=eq.${user.id},receiver_id=eq.${user.id}`
+      }, (payload) => {
+        console.log('Call session update:', payload.new);
+        if (payload.new.status === 'active') {
+          setActiveCall(payload.new);
+        } else if (payload.new.status === 'ended' || payload.new.status === 'declined') {
+          setActiveCall(null);
+          setIncomingCall(null);
+        }
+      })
+      .subscribe();
+
+    callNotificationChannelRef.current = channel;
+  };
+
+  // Start a call and notify the other user
+  const initiateCall = async (type: 'video' | 'audio') => {
+    if (!selectedDM || !user || !currentConversationId) return;
+
+    try {
+      console.log(`Starting ${type} call with ${selectedDM}`);
+      
+      // First request permissions
+      const permissionResult = await requestMediaPermissions(type);
+      if (!permissionResult.success) {
+        alert(permissionResult.error);
+        return;
+      }
+
+      // Create call session using database function
+      const { data, error } = await supabase.rpc('start_call', {
+        p_receiver_id: selectedDM,
+        p_call_type: type,
+        p_conversation_id: currentConversationId
+      });
+
+      if (error) {
+        console.error('Error starting call:', error);
+        alert('Failed to start call. Please try again.');
+        return;
+      }
+
+      console.log('Call started:', data);
+      setActiveCall(data);
+      setShowVideoCallModal(false);
+      
+      // Start video call interface with current stream
+      if (currentStream) {
+        await startVideoCall(currentStream);
+      }
+      
+      // Show caller waiting UI
+      console.log(`${type} call started! Waiting for ${availableDirectMessages.find(dm => dm.id === selectedDM)?.name} to answer...`);
+      
+    } catch (error) {
+      console.error('Failed to initiate call:', error);
+      alert('Failed to start call. Please try again.');
+    }
+  };
+
+  // Answer an incoming call
+  const answerCall = async (callSessionId: string) => {
+    try {
+      console.log('Answering call:', callSessionId);
+      
+      // Request permissions for the call
+      const callType = incomingCall?.call_type || 'video';
+      const permissionResult = await requestMediaPermissions(callType);
+      if (!permissionResult.success) {
+        // Decline call if permissions failed
+        await declineCall(callSessionId);
+        return;
+      }
+
+      // Answer the call using database function
+      const { data, error } = await supabase.rpc('answer_call', {
+        p_call_session_id: callSessionId
+      });
+
+      if (error) {
+        console.error('Error answering call:', error);
+        return;
+      }
+
+      console.log('Call answered:', data);
+      setActiveCall(data);
+      setIncomingCall(null);
+      
+      // Start video call interface
+      if (currentStream) {
+        await startVideoCall(currentStream);
+      }
+      
+      // Show active call UI
+      console.log(`Call connected! You're now in a ${callType} call.`);
+      
+    } catch (error) {
+      console.error('Failed to answer call:', error);
+    }
+  };
+
+  // Decline a call
+  const declineCall = async (callSessionId: string) => {
+    try {
+      console.log('Declining call:', callSessionId);
+      
+      await supabase.rpc('end_call', {
+        p_call_session_id: callSessionId,
+        p_reason: 'declined'
+      });
+
+      setIncomingCall(null);
+      console.log('Call declined');
+      
+    } catch (error) {
+      console.error('Failed to decline call:', error);
+    }
+  };
+
+  // End an active call
+  const endActiveCall = async () => {
+    if (!activeCall) return;
+
+    try {
+      console.log('Ending active call:', activeCall.id);
+      
+      await supabase.rpc('end_call', {
+        p_call_session_id: activeCall.id,
+        p_reason: 'ended'
+      });
+
+      // Stop all media streams and close video call
+      stopMediaStream();
+      if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        setScreenStream(null);
+      }
+      setShowVideoCall(false);
+      setLocalStream(null);
+      setRemoteStream(null);
+      setIsScreenSharing(false);
+      setIsVideoMuted(false);
+      setIsAudioMuted(false);
+      
+      // Clear call duration timer
+      if (callDurationInterval.current) {
+        clearInterval(callDurationInterval.current);
+        callDurationInterval.current = null;
+      }
+      setMeetStartTime(null);
+      setCallDuration('00:00');
+      
+      setActiveCall(null);
+      setIncomingCall(null);
+      console.log('Call ended');
+      
+    } catch (error) {
+      console.error('Failed to end call:', error);
+    }
+  };
+
+  // Video call control functions
+  const startVideoCall = async (stream: MediaStream) => {
+    setLocalStream(stream);
+    setShowVideoCall(true);
+    setMeetStartTime(new Date());
+    
+    // Start duration tracking
+    if (callDurationInterval.current) {
+      clearInterval(callDurationInterval.current);
+    }
+    
+    callDurationInterval.current = setInterval(() => {
+      if (meetStartTime) {
+        const now = new Date();
+        const diff = Math.floor((now.getTime() - meetStartTime.getTime()) / 1000);
+        const minutes = Math.floor(diff / 60);
+        const seconds = diff % 60;
+        setCallDuration(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+      }
+    }, 1000);
+    
+    // Set up local video
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+    }
+  };
+
+  // Ensure video elements are connected to streams
+  useEffect(() => {
+    if (localVideoRef.current) {
+      // Show screen share if active, otherwise show camera stream
+      const streamToShow = isScreenSharing ? screenStream : localStream;
+      if (streamToShow) {
+        localVideoRef.current.srcObject = streamToShow;
+      }
+    }
+  }, [localStream, screenStream, isScreenSharing]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
+
+  // For demo purposes, show local stream as remote stream if no actual remote stream
+  useEffect(() => {
+    if (!remoteStream && localStream && showVideoCall) {
+      // Create a clone of the local stream for demo
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        const clonedStream = new MediaStream([videoTrack.clone()]);
+        setRemoteStream(clonedStream);
+      }
+    }
+  }, [localStream, showVideoCall, remoteStream]);
+
+  const toggleVideo = () => {
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsVideoMuted(!videoTrack.enabled);
+      }
+    }
+  };
+
+  const toggleAudio = () => {
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsAudioMuted(!audioTrack.enabled);
+      }
+    }
+  };
+
+  const startScreenShare = async () => {
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          displaySurface: 'monitor',
+          logicalSurface: true,
+          cursor: 'always',
+          width: { max: 1920 },
+          height: { max: 1080 },
+          frameRate: { max: 30 }
+        } as any,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        }
+      });
+
+      setScreenStream(displayStream);
+      setIsScreenSharing(true);
+
+      // Update local video to show screen share
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = displayStream;
+      }
+
+      // Handle when user stops sharing via browser controls
+      displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+        stopScreenShare();
+      });
+
+    } catch (error) {
+      console.error('Error starting screen share:', error);
+      alert('Failed to start screen sharing. Please ensure you granted the necessary permissions.');
+    }
+  };
+
+  const stopScreenShare = () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      setScreenStream(null);
+    }
+    setIsScreenSharing(false);
+
+    // Switch back to camera if available
+    if (localStream && localVideoRef.current) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  };
+
+  const endCall = () => {
+    // Stop all streams
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+    
+    if (remoteStream) {
+      remoteStream.getTracks().forEach(track => track.stop());
+      setRemoteStream(null);
+    }
+    
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      setScreenStream(null);
+    }
+
+    // Reset states
+    setShowVideoCall(false);
+    setIsVideoMuted(false);
+    setIsAudioMuted(false);
+    setIsScreenSharing(false);
+    setCurrentCallSession(null);
   };
 
   const sendFilesMessage = async () => {
@@ -1869,8 +2351,8 @@ export const Chat: React.FC = () => {
         {/* Chat Content */}
         <div className="flex-1 flex flex-col">
           {/* Sidebar Navigation */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="py-2">
+          <div className="flex-1 flex flex-col">
+            <div className="py-2 flex-shrink-0">
               {sidebarItems.map((item) => (
                 <button
                   key={item.id}
@@ -1895,7 +2377,7 @@ export const Chat: React.FC = () => {
             </div>
 
             {/* Channels Section */}
-            <div className="px-2 py-3 border-t border-gray-200">
+            <div className="px-2 py-3 border-t border-gray-200 flex-shrink-0">
               <div className="flex items-center justify-between px-2 py-1 mb-1">
                 <span className="text-xs font-semibold text-gray-600">CHANNELS</span>
                 <button 
@@ -1953,9 +2435,9 @@ export const Chat: React.FC = () => {
             </div>
 
             {/* Direct Messages Section */}
-            <div className="px-2 py-3 border-t border-gray-200">
+            <div className="px-2 py-3 border-t border-gray-200 flex-1 flex flex-col min-h-0">
               <div className="px-2 py-1 text-xs font-semibold text-gray-600 mb-1">DIRECT MESSAGES</div>
-              <div className="space-y-0.5">
+              <div className="space-y-0.5 flex-1 overflow-y-auto min-h-0">
                 {availableDirectMessages.length > 0 ? (
                   availableDirectMessages.map((dm) => (
                     <button
@@ -2096,6 +2578,58 @@ export const Chat: React.FC = () => {
                                 {message.is_edited && <span className="text-xs text-gray-400">(edited)</span>}
                               </div>
                               <div className="text-gray-800">{message.content}</div>
+
+                              {/* Message Reactions */}
+                              {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {messageReactions[message.id].map((reaction, idx) => (
+                                    <button
+                                      key={idx}
+                                      onClick={() => onEmojiReact(message.id, reaction.emoji)}
+                                      className={`inline-flex items-center px-2 py-1 rounded-full text-xs border transition-colors ${
+                                        reaction.users.includes(user?.id || '')
+                                          ? 'bg-blue-100 border-blue-300 text-blue-700'
+                                          : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
+                                      }`}
+                                    >
+                                      <span className="mr-1">{reaction.emoji}</span>
+                                      <span>{reaction.count}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Reaction Button */}
+                              <div className="flex items-center mt-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setShowReactionPicker(showReactionPicker === message.id ? null : message.id);
+                                  }}
+                                  className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                                  title="Add reaction"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                </button>
+
+                                {/* Quick Reaction Picker */}
+                                {showReactionPicker === message.id && (
+                                  <div className="reaction-picker ml-2 flex space-x-1 bg-white border border-gray-200 rounded-full px-2 py-1 shadow-sm">
+                                    {['❤️', '😂', '👍', '😮', '😢', '😡'].map(emoji => (
+                                      <button
+                                        key={emoji}
+                                        onClick={() => onEmojiReact(message.id, emoji)}
+                                        className="hover:bg-gray-100 rounded p-1 text-sm transition-colors"
+                                        title={`React with ${emoji}`}
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -2568,6 +3102,58 @@ export const Chat: React.FC = () => {
                           </div>
                           <div className="text-gray-800 text-sm">
                             {message.message_type === 'file' ? renderFileFromDB(message) : renderFileMessage(message.content)}
+                          </div>
+
+                          {/* Message Reactions */}
+                          {messageReactions[message.id] && messageReactions[message.id].length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {messageReactions[message.id].map((reaction, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => onEmojiReact(message.id, reaction.emoji)}
+                                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs border transition-colors ${
+                                    reaction.users.includes(user?.id || '')
+                                      ? 'bg-blue-100 border-blue-300 text-blue-700'
+                                      : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200'
+                                  }`}
+                                >
+                                  <span className="mr-1">{reaction.emoji}</span>
+                                  <span>{reaction.count}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Reaction Button */}
+                          <div className="flex items-center mt-1">
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setShowReactionPicker(showReactionPicker === message.id ? null : message.id);
+                              }}
+                              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                              title="Add reaction"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            </button>
+
+                            {/* Quick Reaction Picker */}
+                            {showReactionPicker === message.id && (
+                              <div className="reaction-picker ml-2 flex space-x-1 bg-white border border-gray-200 rounded-full px-2 py-1 shadow-sm">
+                                {['❤️', '😂', '👍', '😮', '😢', '😡'].map(emoji => (
+                                  <button
+                                    key={emoji}
+                                    onClick={() => onEmojiReact(message.id, emoji)}
+                                    className="hover:bg-gray-100 rounded p-1 text-sm transition-colors"
+                                    title={`React with ${emoji}`}
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -4262,23 +4848,7 @@ export const Chat: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  onClick={async () => {
-                    if (permissionsDenied) {
-                      alert('Permissions were denied. Please refresh the page and allow camera/microphone access when prompted.');
-                      return;
-                    }
-                    
-                    const result = await requestMediaPermissions(callType);
-                    if (result.success) {
-                      const callTypeText = callType === 'video' 
-                        ? (result.audioOnly ? 'Audio' : 'Video + Audio')
-                        : 'Audio';
-                      alert(`${callTypeText} call started with ${availableDirectMessages.find(dm => dm.id === selectedDM)?.name}!`);
-                      setShowVideoCallModal(false);
-                    } else {
-                      alert(result.error || 'Failed to access camera/microphone. Please check your permissions.');
-                    }
-                  }}
+                  onClick={() => initiateCall(callType)}
                   disabled={permissionsDenied}
                   className={`flex-1 px-4 py-2 rounded-lg transition-colors flex items-center justify-center ${
                     permissionsDenied 
@@ -4298,17 +4868,48 @@ export const Chat: React.FC = () => {
       {/* Emoji Picker */}
       {showEmojiPicker && (
         <div 
-          className="emoji-picker-container fixed z-50"
+          className="emoji-picker-container fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg"
           style={{ 
             top: emojiPickerPosition.top, 
-            left: emojiPickerPosition.left 
+            left: emojiPickerPosition.left,
+            width: '380px',
+            maxHeight: '400px'
           }}
         >
-          <EmojiPicker
-            onEmojiClick={onEmojiSelect}
-            width={320}
-            height={350}
-          />
+          {/* Category Tabs */}
+          <div className="border-b border-gray-200 p-2">
+            <div className="flex space-x-1 overflow-x-auto">
+              {Object.keys(emojiCategories).map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setCurrentEmojiCategory(category)}
+                  className={`px-3 py-1 text-xs font-medium rounded-full whitespace-nowrap transition-colors ${
+                    currentEmojiCategory === category
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Emoji Grid */}
+          <div className="p-3 max-h-64 overflow-y-auto">
+            <div className="grid grid-cols-8 gap-1">
+              {emojiCategories[currentEmojiCategory].map((emoji, index) => (
+                <button
+                  key={index}
+                  onClick={() => onEmojiSelect(emoji)}
+                  className="p-2 hover:bg-gray-100 rounded text-lg transition-colors flex items-center justify-center"
+                  title={emoji}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -4367,6 +4968,338 @@ export const Chat: React.FC = () => {
                 {uploadingFiles ? 'Uploading...' : `Send ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Incoming Call Notification */}
+      {incomingCall && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 text-center">
+            <div className="mb-4">
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-2xl mx-auto mb-3">
+                {incomingCall.caller_name?.charAt(0).toUpperCase() || 'U'}
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                Incoming {incomingCall.call_type} call
+              </h3>
+              <p className="text-gray-600">
+                {incomingCall.caller_name} is calling you
+              </p>
+            </div>
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={() => declineCall(incomingCall.call_session_id)}
+                className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center"
+              >
+                <X className="w-5 h-5 mr-2" />
+                Decline
+              </button>
+              <button
+                onClick={() => answerCall(incomingCall.call_session_id)}
+                className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center"
+              >
+                {incomingCall.call_type === 'video' ? (
+                  <Video className="w-5 h-5 mr-2" />
+                ) : (
+                  <Mic className="w-5 h-5 mr-2" />
+                )}
+                Answer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Screen Video Call */}
+      {showVideoCall && (
+        <div className="fixed inset-0 bg-gray-900 z-50 flex flex-col">
+          {/* Google Meet Style Header */}
+          <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center">
+                  <Video className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="font-medium text-gray-900">
+                    Meet with {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                  </h1>
+                  <p className="text-sm text-gray-500">
+                    {callDuration} • {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setShowMeetInfo(!showMeetInfo)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Meeting details"
+              >
+                <Info className="w-5 h-5 text-gray-600" />
+              </button>
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Settings"
+              >
+                <Settings className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+          </div>
+
+          {/* Video Area */}
+          <div className="flex-1 relative bg-gray-900">
+            {/* Main Video Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 h-full">
+              {/* Remote Participant Video */}
+              <div className="relative bg-gray-800 rounded-xl overflow-hidden">
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover"
+                  style={{ transform: 'scaleX(-1)' }}
+                />
+                
+                {/* Remote participant info */}
+                <div className="absolute bottom-4 left-4 bg-black bg-opacity-60 text-white px-3 py-1 rounded-lg">
+                  <span className="text-sm font-medium">
+                    {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                  </span>
+                </div>
+
+                {/* No video placeholder */}
+                {!remoteStream && (
+                  <div className="absolute inset-0 bg-gray-800 flex flex-col items-center justify-center">
+                    <div className="w-24 h-24 bg-gray-600 rounded-full flex items-center justify-center mb-3">
+                      <span className="text-2xl font-semibold text-white">
+                        {availableDirectMessages.find(dm => dm.id === selectedDM)?.name?.charAt(0).toUpperCase() || 'U'}
+                      </span>
+                    </div>
+                    <p className="text-white font-medium">
+                      {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                    </p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      {activeCall?.status === 'calling' ? 'Joining...' : 'Camera is off'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Local Participant Video (You) */}
+              <div className="relative bg-gray-800 rounded-xl overflow-hidden">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                  style={{ transform: 'scaleX(-1)' }}
+                />
+                
+                {/* Local participant info */}
+                <div className="absolute bottom-4 left-4 bg-black bg-opacity-60 text-white px-3 py-1 rounded-lg">
+                  <span className="text-sm font-medium">You</span>
+                  {isScreenSharing && (
+                    <span className="ml-2 text-xs bg-green-600 px-2 py-0.5 rounded-full">
+                      Presenting
+                    </span>
+                  )}
+                </div>
+
+                {/* Video muted overlay */}
+                {isVideoMuted && (
+                  <div className="absolute inset-0 bg-gray-800 flex flex-col items-center justify-center">
+                    <div className="w-24 h-24 bg-gray-600 rounded-full flex items-center justify-center mb-3">
+                      <VideoOff className="w-8 h-8 text-white" />
+                    </div>
+                    <p className="text-white font-medium">Camera is off</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Google Meet Style Bottom Controls */}
+          <div className="bg-white border-t border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-center space-x-4">
+              {/* Microphone */}
+              <button
+                onClick={toggleAudio}
+                className={`p-4 rounded-full transition-all duration-200 hover:scale-105 ${
+                  isAudioMuted
+                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+                title={isAudioMuted ? 'Unmute microphone (m)' : 'Mute microphone (m)'}
+              >
+                {isAudioMuted ? (
+                  <MicOff className="w-6 h-6" />
+                ) : (
+                  <Mic className="w-6 h-6" />
+                )}
+              </button>
+
+              {/* Camera */}
+              <button
+                onClick={toggleVideo}
+                className={`p-4 rounded-full transition-all duration-200 hover:scale-105 ${
+                  isVideoMuted
+                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+                title={isVideoMuted ? 'Turn on camera (c)' : 'Turn off camera (c)'}
+              >
+                {isVideoMuted ? (
+                  <VideoOff className="w-6 h-6" />
+                ) : (
+                  <Video className="w-6 h-6" />
+                )}
+              </button>
+
+              {/* Screen Share */}
+              <button
+                onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+                className={`p-4 rounded-full transition-all duration-200 hover:scale-105 ${
+                  isScreenSharing
+                    ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+                title={isScreenSharing ? 'Stop presenting (p)' : 'Present now (p)'}
+              >
+                {isScreenSharing ? (
+                  <MonitorSpeaker className="w-6 h-6" />
+                ) : (
+                  <Monitor className="w-6 h-6" />
+                )}
+              </button>
+
+              {/* More Options */}
+              <button
+                className="p-4 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all duration-200 hover:scale-105"
+                title="More options"
+              >
+                <MoreVertical className="w-6 h-6" />
+              </button>
+
+              {/* End Call */}
+              <button
+                onClick={endActiveCall}
+                className="px-6 py-3 bg-red-500 hover:bg-red-600 text-white rounded-full transition-all duration-200 hover:scale-105 flex items-center space-x-2 font-medium"
+                title="Leave call"
+              >
+                <PhoneOff className="w-5 h-5" />
+                <span>Leave call</span>
+              </button>
+            </div>
+
+            {/* Screen sharing notification */}
+            {isScreenSharing && (
+              <div className="mt-3 flex items-center justify-center">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-blue-700 font-medium">
+                    You are presenting to everyone
+                  </span>
+                  <button
+                    onClick={stopScreenShare}
+                    className="text-blue-700 hover:text-blue-800 text-sm underline"
+                  >
+                    Stop presenting
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Meet Info Sidebar */}
+          {showMeetInfo && (
+            <div className="fixed right-0 top-0 bottom-0 w-80 bg-white border-l border-gray-200 shadow-lg z-10">
+              <div className="p-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-900">Meeting details</h3>
+                  <button
+                    onClick={() => setShowMeetInfo(false)}
+                    className="p-1 hover:bg-gray-100 rounded"
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+              </div>
+              <div className="p-4 space-y-4">
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Joining info</h4>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-sm text-gray-600">Meeting with</p>
+                    <p className="font-medium text-gray-900">
+                      {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Duration</h4>
+                  <p className="text-lg font-mono text-gray-700">{callDuration}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Participants (2)</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                        <span className="text-sm font-semibold text-white">
+                          {user?.email?.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      <span className="text-sm text-gray-700">You</span>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
+                        <span className="text-sm font-semibold text-white">
+                          {availableDirectMessages.find(dm => dm.id === selectedDM)?.name?.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      <span className="text-sm text-gray-700">
+                        {availableDirectMessages.find(dm => dm.id === selectedDM)?.name}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Active Call Overlay (when not in full video mode) */}
+      {activeCall && !showVideoCall && (
+        <div className="fixed top-4 right-4 bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-50">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+            <div>
+              <p className="text-sm font-medium text-gray-900">
+                {activeCall.call_type} Call Active
+              </p>
+              <p className="text-xs text-gray-500">
+                {activeCall.caller_id === user?.id ? 'Outgoing' : 'Incoming'} call
+              </p>
+            </div>
+            <button
+              onClick={() => setShowVideoCall(true)}
+              className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors mr-2"
+              title="Show video call"
+            >
+              <Video className="w-4 h-4" />
+            </button>
+            <button
+              onClick={endActiveCall}
+              className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              title="End call"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
