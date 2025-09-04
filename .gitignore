@@ -26,3 +26,4 @@ docs/
 package-lock.json
 sql/
 team-up-clone-main/
+.env
