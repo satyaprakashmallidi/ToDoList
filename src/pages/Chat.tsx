@@ -133,7 +133,8 @@ export const Chat: React.FC = () => {
     markDirectMessagesAsRead,
     getUnreadReplies,
     getReadReplies,
-    getSentMessages
+    getSentMessages,
+    loadChannelMembers
   } = useChannels();
   const [repliesTab, setRepliesTab] = useState<'unread' | 'read'>('unread');
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
@@ -143,6 +144,7 @@ export const Chat: React.FC = () => {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [showChannelDropdown, setShowChannelDropdown] = useState(true);
+  
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [activeSidebarItem, setActiveSidebarItem] = useState<string>('replies');
   const [postContent, setPostContent] = useState('');
@@ -483,13 +485,7 @@ export const Chat: React.FC = () => {
         // Find and select the newly created channel
         const newChannel = dbChannels.find(ch => ch.id === channelId);
         if (newChannel) {
-          setSelectedChannel({
-            id: newChannel.id,
-            name: newChannel.name,
-            type: newChannel.channel_type as 'text' | 'voice',
-            description: newChannel.description || undefined,
-            memberCount: newChannel.member_count || 1
-          });
+          await selectChannelWithMembers(newChannel);
         }
       }
     } catch (error) {
@@ -531,6 +527,47 @@ export const Chat: React.FC = () => {
       } catch (error) {
         console.error('Error adding members:', error);
       }
+    }
+  };
+
+  // Helper function to select a channel and load its members
+  const selectChannelWithMembers = async (channel: any, loadMessages = false) => {
+    try {
+      // Load channel members
+      const members = await loadChannelMembers(channel.id);
+      
+      // Create the selected channel object with members
+      const selectedChannelData = {
+        id: channel.id,
+        name: channel.name,
+        type: channel.channel_type as 'text' | 'voice',
+        description: channel.description || undefined,
+        memberCount: channel.member_count || 1,
+        members: members.map(member => ({
+          id: member.user.id,
+          name: member.user.name,
+          email: member.user.email,
+          role: member.role as 'admin' | 'member'
+        }))
+      };
+      
+      setSelectedChannel(selectedChannelData);
+      
+      if (loadMessages) {
+        await loadChannelMessages(channel.id);
+      }
+      
+      console.log('Selected channel with members:', selectedChannelData);
+    } catch (error) {
+      console.error('Failed to load channel members:', error);
+      // Fallback to basic channel selection without members
+      setSelectedChannel({
+        id: channel.id,
+        name: channel.name,
+        type: channel.channel_type as 'text' | 'voice',
+        description: channel.description || undefined,
+        memberCount: channel.member_count || 1
+      });
     }
   };
 
@@ -661,13 +698,7 @@ export const Chat: React.FC = () => {
     console.log('Auto-select channel effect triggered:', { activeSidebarItem, selectedChannel, dbChannels });
     if (activeSidebarItem === 'posts' && !selectedChannel && dbChannels.length > 0) {
       console.log('Auto-selecting first channel for posts:', dbChannels[0]);
-      setSelectedChannel({
-        id: dbChannels[0].id,
-        name: dbChannels[0].name,
-        type: dbChannels[0].channel_type as 'text' | 'voice',
-        description: dbChannels[0].description || undefined,
-        memberCount: dbChannels[0].member_count || 1
-      });
+      selectChannelWithMembers(dbChannels[0]);
       setActiveSidebarItem('posts');
     }
   }, [activeSidebarItem, selectedChannel, dbChannels]);
@@ -1409,6 +1440,7 @@ export const Chat: React.FC = () => {
       }
     }
   };
+
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -2923,17 +2955,9 @@ export const Chat: React.FC = () => {
                           : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
                       }`}
                       onClick={() => {
-                        setSelectedChannel({
-                          id: channel.id,
-                          name: channel.name,
-                          type: channel.channel_type as 'text' | 'voice',
-                          description: channel.description || undefined,
-                          memberCount: channel.member_count || 1
-                        });
+                        selectChannelWithMembers(channel, true);
                         setSelectedDM(null);
                         setActiveSidebarItem('channel');
-                        // Load messages for this channel
-                        loadChannelMessages(channel.id);
                       }}
                     >
                       <Hash className="w-4 h-4 mr-2 flex-shrink-0" />
@@ -2982,31 +3006,12 @@ export const Chat: React.FC = () => {
                     No team members yet
                   </div>
                 )}
-                <button className="w-full flex items-center px-2 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded hover:bg-gray-200 transition-colors">
-                  <Plus className="w-4 h-4 mr-2" />
-                  New message
-                </button>
               </div>
             </div>
             </div>
           </div>
 
         {/* Bottom User Section */}
-        <div className="p-3 border-t border-gray-200 bg-gray-100 flex-shrink-0">
-          <div className="flex items-center">
-            <div className="relative">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                {user?.email?.charAt(0).toUpperCase() || 'U'}
-              </div>
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
-            </div>
-            <div className="ml-3 flex-1">
-              <div className="text-sm font-medium text-gray-900">{user?.email?.split('@')[0] || 'User'}</div>
-              <div className="text-xs text-gray-500">Online</div>
-            </div>
-            <Settings className="w-5 h-5 text-gray-500 cursor-pointer hover:text-gray-700" />
-          </div>
-        </div>
       </div>
 
       {/* Main Area */}
@@ -3183,9 +3188,9 @@ export const Chat: React.FC = () => {
                   </div>
 
                   {/* Message Input */}
-                  <div className="border-t border-gray-200 bg-white p-4">
+                  <div className="border-t border-gray-200 bg-white p-2">
                     <div className="bg-white border border-gray-300 rounded-lg">
-                      <div className="flex items-start p-3">
+                      <div className="flex items-start p-2">
                         <input
                           type="text"
                           value={messageInput}
@@ -3195,7 +3200,7 @@ export const Chat: React.FC = () => {
                           className="flex-1 text-gray-900 placeholder-gray-500 focus:outline-none"
                         />
                       </div>
-                      <div className="flex items-center justify-between px-3 pb-3">
+                      <div className="flex items-center justify-between px-2 pb-1">
                         <div className="flex items-center space-x-1">
                           <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
                             <Plus className="w-4 h-4" />
@@ -3272,7 +3277,7 @@ export const Chat: React.FC = () => {
                               placeholder="What would you like to share?"
                               value={channelPostContent}
                               onChange={(e) => setChannelPostContent(e.target.value)}
-                              rows={3}
+                              rows={2}
                               className="w-full text-gray-900 placeholder-gray-500 focus:outline-none resize-none border-0"
                             />
                           </div>
@@ -3281,6 +3286,7 @@ export const Chat: React.FC = () => {
                               <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
                                 <Plus className="w-4 h-4" />
                               </button>
+                              <div className="h-4 w-px bg-gray-300 mx-1" />
                               <button className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded flex items-center">
                                 <Bell className="w-3 h-3 mr-1" />
                                 Update
@@ -3663,7 +3669,7 @@ export const Chat: React.FC = () => {
                             {(message.is_edited || message.edited) && <span className="text-xs text-gray-400">(edited)</span>}
                           </div>
                           <div className="text-gray-800 text-xs">
-                            {message.message_type === 'file' ? renderFileFromDB(message) : renderFileMessage(message.content)}
+{message.message_type === 'file' ? renderFileFromDB(message) : renderFileMessage(message.content)}
                           </div>
 
 
@@ -3727,6 +3733,9 @@ export const Chat: React.FC = () => {
                       </button>
                       <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
                         <Link2 className="w-4 h-4" />
+                      </button>
+                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                        <List className="w-4 h-4" />
                       </button>
                       <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
                         <Code className="w-4 h-4" />
@@ -3910,7 +3919,7 @@ export const Chat: React.FC = () => {
                               const channelId = e.target.value;
                               const channel = dbChannels.find(ch => ch.id === channelId);
                               if (channel) {
-                                setSelectedChannel(channel as any);
+                                selectChannelWithMembers(channel);
                                 setSelectedPostChannel(channel.name);
                               }
                             }}
@@ -3938,7 +3947,7 @@ export const Chat: React.FC = () => {
                           placeholder="Write an update..."
                           value={postContent}
                           onChange={(e) => setPostContent(e.target.value)}
-                          rows={2}
+                          rows={1}
                           className="w-full placeholder-gray-500 border-0 focus:outline-none resize-none"
                         />
                         
@@ -3948,6 +3957,23 @@ export const Chat: React.FC = () => {
                             <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
                               <Plus className="w-4 h-4" />
                             </button>
+                            <div className="h-4 w-px bg-gray-300 mx-1" />
+                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                              <Bold className="w-4 h-4" />
+                            </button>
+                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                              <Italic className="w-4 h-4" />
+                            </button>
+                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                              <Link2 className="w-4 h-4" />
+                            </button>
+                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                              <List className="w-4 h-4" />
+                            </button>
+                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                              <Code className="w-4 h-4" />
+                            </button>
+                            <div className="h-4 w-px bg-gray-300 mx-1" />
                             <button className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded flex items-center">
                               <span className="mr-1">🔔</span>
                               Update
@@ -4266,7 +4292,7 @@ export const Chat: React.FC = () => {
                           placeholder="Write an update..."
                           value={postContent}
                           onChange={(e) => setPostContent(e.target.value)}
-                          rows={8}
+                          rows={4}
                           className="w-full placeholder-gray-500 border-0 focus:outline-none resize-none bg-transparent"
                         />
                       </div>
@@ -4279,6 +4305,23 @@ export const Chat: React.FC = () => {
                           <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
                             <Plus className="w-4 h-4" />
                           </button>
+                          <div className="h-4 w-px bg-gray-300 mx-1" />
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Bold className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Italic className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Link2 className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <List className="w-4 h-4" />
+                          </button>
+                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                            <Code className="w-4 h-4" />
+                          </button>
+                          <div className="h-4 w-px bg-gray-300 mx-1" />
                           <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
                             <Paperclip className="w-4 h-4" />
                           </button>
@@ -5221,7 +5264,8 @@ export const Chat: React.FC = () => {
                     member.email.toLowerCase().includes(searchMember.toLowerCase())
                   )
                   .map(member => {
-                    const isExistingMember = selectedChannel.members?.some(m => m.id === member.id);
+                    const isExistingMember = selectedChannel.members?.some(m => m.id === member.id) || false;
+                    console.log('Member:', member.name, 'isExisting:', isExistingMember, 'channelMembers:', selectedChannel.members);
                     return (
                     <div
                       key={member.id}
@@ -5241,20 +5285,17 @@ export const Chat: React.FC = () => {
                       }}
                     >
                       <div className="flex items-center space-x-3">
-                        {isExistingMember ? (
-                          <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
-                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                            </svg>
-                          </div>
-                        ) : (
-                          <input
-                            type="checkbox"
-                            checked={selectedMembers.includes(member.id)}
-                            onChange={() => {}}
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                          />
-                        )}
+                        <input
+                          type="checkbox"
+                          checked={isExistingMember || selectedMembers.includes(member.id)}
+                          onChange={() => {}}
+                          disabled={isExistingMember}
+                          className={`w-4 h-4 border-gray-300 rounded focus:ring-blue-500 ${
+                            isExistingMember 
+                              ? 'text-blue-600 bg-blue-50 cursor-not-allowed' 
+                              : 'text-blue-600 cursor-pointer'
+                          }`}
+                        />
                         <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
                           {member.name.charAt(0)}
                         </div>
@@ -5400,6 +5441,7 @@ export const Chat: React.FC = () => {
           </div>
         </div>
       )}
+
 
       {/* File Preview Modal */}
       {showFilePreview && selectedFiles.length > 0 && (

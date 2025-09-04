@@ -562,6 +562,72 @@ export function useChannels() {
     }
   }, [user, supabase, loadChannels]);
 
+  // Load members for a specific channel
+  const loadChannelMembers = useCallback(async (channelId: string) => {
+    if (!user) return [];
+
+    try {
+      const { data: members, error } = await supabase
+        .from('channel_members')
+        .select(`
+          id,
+          channel_id,
+          user_id,
+          role,
+          can_post,
+          can_manage,
+          added_by,
+          joined_at,
+          left_at,
+          created_at,
+          profiles!inner(
+            id,
+            full_name,
+            first_name,
+            email,
+            avatar_url
+          )
+        `)
+        .eq('channel_id', channelId)
+        .is('left_at', null);
+
+      if (error) {
+        console.error('Error loading channel members:', error);
+        return [];
+      }
+
+      const formattedMembers: ChannelMember[] = (members || []).map(member => ({
+        id: member.id,
+        channel_id: member.channel_id,
+        user_id: member.user_id,
+        role: member.role,
+        can_post: member.can_post,
+        can_manage: member.can_manage,
+        added_by: member.added_by,
+        joined_at: member.joined_at,
+        left_at: member.left_at,
+        created_at: member.created_at,
+        user: {
+          id: member.profiles.id,
+          name: member.profiles.full_name || member.profiles.email || 'Unknown',
+          email: member.profiles.email,
+          avatar_url: member.profiles.avatar_url
+        }
+      }));
+
+      // Update the channelMembers state
+      setChannelMembers(prev => ({
+        ...prev,
+        [channelId]: formattedMembers
+      }));
+
+      return formattedMembers;
+    } catch (err) {
+      console.error('Failed to load channel members:', err);
+      return [];
+    }
+  }, [user, supabase]);
+
   // Cleanup function for subscriptions
   const cleanupSubscriptions = useCallback(() => {
     subscriptionsRef.current.forEach((channel) => {
@@ -1723,6 +1789,7 @@ export function useChannels() {
     loadChannelMessages,
     sendChannelMessage,
     addChannelMembers,
+    loadChannelMembers,
     loadDirectConversations,
     sendDirectMessage,
     loadDirectMessages,
