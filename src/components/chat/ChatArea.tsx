@@ -156,7 +156,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-3">
                 <MessageCircle className="w-6 h-6 text-gray-400" />
               </div>
-              <p className="text-gray-500">No messages yet. Start the conversation!</p>
+              <p className="text-base text-gray-500">No messages yet. Start the conversation!</p>
             </div>
           </div>
         ) : (
@@ -206,16 +206,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           }`}>
                             {/* Sender name for other users in groups */}
                             {!isOwn && conversation.type === 'group' && showAvatar && (
-                              <p className="text-xs font-medium mb-1 text-blue-600">
+                              <p className="text-sm font-medium mb-1 text-blue-600">
                                 {message.sender_first_name || message.sender_name}
                               </p>
                             )}
                             
                             {/* Message content */}
-                            <p className="text-sm break-words leading-relaxed">{message.content}</p>
+                            <p className="text-base break-words leading-relaxed">{message.content}</p>
                             
                             {/* Timestamp */}
-                            <p className={`text-xs mt-2 ${
+                            <p className={`text-sm mt-2 ${
                               isOwn ? 'text-blue-100' : 'text-gray-500'
                             }`}>
                               {formatTime(message.created_at)}

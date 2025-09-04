@@ -254,6 +254,13 @@ export const Chat: React.FC = () => {
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [showMeetInfo, setShowMeetInfo] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showEditChannelModal, setShowEditChannelModal] = useState(false);
+  const [editChannelName, setEditChannelName] = useState('');
+  const [editChannelDescription, setEditChannelDescription] = useState('');
+  const [editChannelType, setEditChannelType] = useState<'text' | 'voice'>('text');
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
   const [meetStartTime, setMeetStartTime] = useState<Date | null>(null);
   const [callDuration, setCallDuration] = useState('00:00');
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -534,6 +541,259 @@ export const Chat: React.FC = () => {
       } catch (error) {
         console.error('Error adding members:', error);
       }
+    }
+  };
+
+  const handleUpdateChannel = async () => {
+    if (!selectedChannel) return;
+
+    // Basic validation
+    if (!editChannelName.trim()) {
+      alert('Channel name cannot be empty');
+      return;
+    }
+
+    try {
+      console.log('Updating channel:', {
+        id: selectedChannel.id,
+        name: editChannelName.trim(),
+        description: editChannelDescription.trim(),
+        type: editChannelType
+      });
+
+      // First, let's try a simpler update approach
+      const updateData: any = {
+        name: editChannelName.trim(),
+        channel_type: editChannelType
+      };
+
+      // Only include description if it's not empty
+      if (editChannelDescription.trim()) {
+        updateData.description = editChannelDescription.trim();
+      }
+
+      // Update in Supabase database
+      const { data, error: updateError } = await supabase
+        .from('channels')
+        .update(updateData)
+        .eq('id', selectedChannel.id)
+        .select();
+
+      if (updateError) {
+        console.error('Database update error details:', {
+          message: updateError.message,
+          details: updateError.details,
+          hint: updateError.hint,
+          code: updateError.code
+        });
+        
+        // Still update UI locally even if database fails
+        console.log('Database update failed, but updating UI locally');
+        
+        const updatedChannel = {
+          ...selectedChannel,
+          name: editChannelName.trim(),
+          description: editChannelDescription.trim() || null,
+          type: editChannelType
+        };
+
+        setSelectedChannel(updatedChannel);
+        
+        // Store in localStorage as backup
+        const channelBackup = {
+          ...updatedChannel,
+          lastUpdated: new Date().toISOString(),
+          needsSync: true
+        };
+        localStorage.setItem(`channel_${selectedChannel.id}`, JSON.stringify(channelBackup));
+        
+        console.log('Updated UI locally and saved to localStorage');
+        setShowEditChannelModal(false);
+        
+        // Show warning but don't prevent the update
+        alert('Channel updated locally, but may not be saved to server. Changes will be retained in this session.');
+        return;
+      }
+
+      console.log('Database update successful:', data);
+
+      // Update the selectedChannel state immediately (optimistic update)
+      const updatedChannel = {
+        ...selectedChannel,
+        name: editChannelName.trim(),
+        description: editChannelDescription.trim() || null,
+        type: editChannelType
+      };
+
+      setSelectedChannel(updatedChannel);
+
+      // Reload channels from database to get fresh data
+      try {
+        await loadChannels();
+        console.log('Channels reloaded successfully');
+      } catch (reloadError) {
+        console.warn('Failed to reload channels, but update was successful:', reloadError);
+      }
+
+      console.log('Channel updated successfully');
+      setShowEditChannelModal(false);
+
+    } catch (error: any) {
+      console.error('Error updating channel:', {
+        message: error?.message,
+        stack: error?.stack,
+        error
+      });
+      
+      const errorMsg = error?.message || 'Unknown error occurred';
+      alert(`Failed to update channel: ${errorMsg}`);
+    }
+  };
+
+  // Search messages function
+  const handleSearchMessages = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      let results: any[] = [];
+
+      // Search in current channel messages if a channel is selected
+      if (selectedChannel && channelMessages[selectedChannel.id]) {
+        const channelResults = channelMessages[selectedChannel.id]
+          .filter(message => 
+            message.content.toLowerCase().includes(query.toLowerCase()) ||
+            message.sender_name.toLowerCase().includes(query.toLowerCase())
+          )
+          .map(message => ({
+            ...message,
+            messageType: 'channel',
+            channelName: selectedChannel.name,
+            highlightedContent: highlightSearchText(message.content, query)
+          }));
+        
+        results = [...results, ...channelResults];
+      }
+
+      // Search in current DM messages if a DM is selected
+      if (selectedDM && currentConversationId && directMessages[currentConversationId]) {
+        const dmResults = directMessages[currentConversationId]
+          .filter(message => 
+            message.content.toLowerCase().includes(query.toLowerCase()) ||
+            message.sender_name.toLowerCase().includes(query.toLowerCase())
+          )
+          .map(message => ({
+            ...message,
+            messageType: 'direct',
+            conversationName: availableDirectMessages.find(dm => dm.id === selectedDM)?.name || 'Direct Message',
+            highlightedContent: highlightSearchText(message.content, query)
+          }));
+        
+        results = [...results, ...dmResults];
+      }
+
+      // Sort results by date (newest first)
+      results.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      setSearchResults(results);
+    } catch (error) {
+      console.error('Error searching messages:', error);
+    }
+  };
+
+  // Helper function to highlight search text
+  const highlightSearchText = (text: string, query: string) => {
+    if (!query) return text;
+    
+    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return text.replace(regex, '<mark class="bg-yellow-200">$1</mark>');
+  };
+
+  // Jump to message function
+  const jumpToMessage = async (message: any) => {
+    try {
+      // Close the search modal
+      setShowSearchModal(false);
+      setSearchQuery('');
+      setSearchResults([]);
+
+      console.log('Jumping to message:', message);
+
+      // Wait for modal to close
+      setTimeout(async () => {
+        // First, find and scroll to the message in the current conversation
+        const messageElement = document.getElementById(`message-${message.id}`);
+        
+        if (messageElement) {
+          // Message is already visible, just scroll to it
+          messageElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center'
+          });
+          
+          // Highlight the message temporarily
+          messageElement.classList.add('bg-yellow-100', 'ring-2', 'ring-yellow-300', 'ring-opacity-50');
+          setTimeout(() => {
+            messageElement.classList.remove('bg-yellow-100', 'ring-2', 'ring-yellow-300', 'ring-opacity-50');
+          }, 2000);
+          
+        } else {
+          // Message is not currently loaded, we need to navigate to the right context
+          console.log('Message not found in current view, loading context...');
+          
+          if (message.messageType === 'channel') {
+            // Navigate to the channel if not already selected
+            const channel = dbChannels.find(ch => ch.name === message.channelName);
+            if (channel && selectedChannel?.id !== channel.id) {
+              console.log('Switching to channel:', channel.name);
+              await selectChannelWithMembers(channel, true);
+              
+              // Wait for messages to load then scroll
+              setTimeout(() => {
+                const messageEl = document.getElementById(`message-${message.id}`);
+                if (messageEl) {
+                  messageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  messageEl.classList.add('bg-yellow-100', 'ring-2', 'ring-yellow-300', 'ring-opacity-50');
+                  setTimeout(() => {
+                    messageEl.classList.remove('bg-yellow-100', 'ring-2', 'ring-yellow-300', 'ring-opacity-50');
+                  }, 2000);
+                }
+              }, 1000);
+            }
+          } else if (message.messageType === 'direct') {
+            // Navigate to the direct message if not already selected
+            const dm = availableDirectMessages.find(dm => dm.name === message.conversationName);
+            if (dm && selectedDM !== dm.id) {
+              console.log('Switching to DM:', dm.name);
+              setSelectedDM(dm.id);
+              setSelectedChannel(null);
+              
+              // Load DM messages and then scroll
+              const conversationId = await getOrCreateDirectConversation(dm.id);
+              if (conversationId) {
+                setCurrentConversationId(conversationId);
+                await loadDirectMessages(conversationId);
+                
+                setTimeout(() => {
+                  const messageEl = document.getElementById(`message-${message.id}`);
+                  if (messageEl) {
+                    messageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    messageEl.classList.add('bg-yellow-100', 'ring-2', 'ring-yellow-300', 'ring-opacity-50');
+                    setTimeout(() => {
+                      messageEl.classList.remove('bg-yellow-100', 'ring-2', 'ring-yellow-300', 'ring-opacity-50');
+                    }, 2000);
+                  }
+                }, 1000);
+              }
+            }
+          }
+        }
+      }, 100);
+
+    } catch (error) {
+      console.error('Error jumping to message:', error);
     }
   };
 
@@ -840,6 +1100,22 @@ export const Chat: React.FC = () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showNotifications]);
+
+  // Handle Escape key for search modal
+  useEffect(() => {
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && showSearchModal) {
+        setShowSearchModal(false);
+        setSearchQuery('');
+        setSearchResults([]);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscapeKey);
+    return () => {
+      document.removeEventListener('keydown', handleEscapeKey);
+    };
+  }, [showSearchModal]);
 
   // Get all unique users (merge team members and direct messages, removing duplicates)
   const getAllUniqueUsers = () => {
@@ -3345,80 +3621,86 @@ export const Chat: React.FC = () => {
                       <UserPlus className="w-4 h-4" />
                     </button>
                     <button 
-                      onClick={() => setShowNotifications(!showNotifications)}
-                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors relative"
+                      onClick={() => setShowSettings(!showSettings)}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Channel settings"
                     >
-                      <Bell className="w-4 h-4" />
-                      {unreadNotificationCount > 0 && (
-                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                          {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                        </span>
-                      )}
-                    </button>
-                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
                       <Settings className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
-                {/* Notifications Dropdown */}
-                {showNotifications && (
+
+                {/* Settings Dropdown */}
+                {showSettings && (
                   <div className="absolute top-full right-4 mt-2 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
                     <div className="p-4 border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
-                        {unreadNotificationCount > 0 && (
-                          <button
-                            onClick={markAllNotificationsAsRead}
-                            className="text-xs text-blue-600 hover:text-blue-700"
-                          >
-                            Mark all as read
-                          </button>
-                        )}
-                      </div>
+                      <h3 className="text-sm font-semibold text-gray-900">Channel Settings</h3>
                     </div>
-                    <div className="max-h-96 overflow-y-auto">
-                      {notifications.length > 0 ? (
-                        notifications.map((notification) => (
-                          <div
-                            key={notification.id}
-                            onClick={() => markNotificationAsRead(notification.id)}
-                            className={`p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${
-                              !notification.read ? 'bg-blue-50' : ''
-                            }`}
-                          >
-                            <div className="flex items-start space-x-3">
-                              <div className={`w-2 h-2 rounded-full mt-2 ${!notification.read ? 'bg-blue-500' : 'bg-gray-300'}`} />
-                              <div className="flex-1">
-                                <p className="text-sm text-gray-900">{notification.message}</p>
-                                <div className="flex items-center space-x-2 mt-1">
-                                  <span className="text-xs text-gray-500">{notification.fromUser}</span>
-                                  <span className="text-xs text-gray-400">
-                                    {new Date(notification.timestamp).toLocaleTimeString()}
-                                  </span>
-                                </div>
-                              </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteNotification(notification.id);
-                                }}
-                                className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                                title="Delete notification"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                                </svg>
-                              </button>
-                            </div>
+                    <div className="p-0">
+                      {/* Channel Details */}
+                      <div className="p-4 border-b border-gray-100">
+                        <h4 className="text-sm font-medium text-gray-900 mb-3">Channel Details</h4>
+                        <div className="space-y-2">
+                          <div>
+                            <span className="text-xs font-medium text-gray-500">Name</span>
+                            <p className="text-sm text-gray-900">#{selectedChannel.name}</p>
                           </div>
-                        ))
-                      ) : (
-                        <div className="p-6 text-center">
-                          <Bell className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                          <p className="text-sm text-gray-500">No notifications yet</p>
+                          <div>
+                            <span className="text-xs font-medium text-gray-500">Description</span>
+                            <p className="text-sm text-gray-900">{selectedChannel.description || 'No description set'}</p>
+                          </div>
+                          <div>
+                            <span className="text-xs font-medium text-gray-500">Members</span>
+                            <p className="text-sm text-gray-900">{selectedChannel.memberCount || 0} members</p>
+                          </div>
+                          <div>
+                            <span className="text-xs font-medium text-gray-500">Type</span>
+                            <p className="text-sm text-gray-900">
+                              {selectedChannel.type === 'text' ? 'Text Channel' : 'Voice Channel'}
+                            </p>
+                          </div>
                         </div>
-                      )}
+                      </div>
+                      
+                      {/* Channel Actions */}
+                      <div className="p-4">
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => {
+                              setShowSettings(false);
+                              setEditChannelName(selectedChannel.name);
+                              setEditChannelDescription(selectedChannel.description || '');
+                              setEditChannelType(selectedChannel.type);
+                              setShowEditChannelModal(true);
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors flex items-center space-x-2"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                            <span>Edit Channel</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowSettings(false);
+                              setShowAddMembersModal(true);
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors flex items-center space-x-2"
+                          >
+                            <UserPlus className="w-4 h-4" />
+                            <span>Add Members</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowSettings(false);
+                              // Add member management functionality later
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg transition-colors flex items-center space-x-2"
+                          >
+                            <Users className="w-4 h-4" />
+                            <span>Manage Members</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -3456,7 +3738,7 @@ export const Chat: React.FC = () => {
                     {selectedChannel && channelMessages[selectedChannel.id]?.length > 0 ? (
                       <div className="space-y-3">
                         {channelMessages[selectedChannel.id].map((message) => (
-                          <div key={message.id} className="flex items-start space-x-2">
+                          <div key={message.id} id={`message-${message.id}`} className="flex items-start space-x-2 py-2 px-4 rounded-lg transition-all duration-200">
                             <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
                               {message.sender_name.charAt(0)}
                             </div>
@@ -3986,7 +4268,11 @@ export const Chat: React.FC = () => {
                     >
                       <Mic className="w-4 h-4" />
                     </button>
-                    <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                    <button 
+                      onClick={() => setShowSearchModal(true)}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Search messages"
+                    >
                       <Search className="w-4 h-4" />
                     </button>
                     <div className="relative">
@@ -4031,8 +4317,9 @@ export const Chat: React.FC = () => {
                   <div>
                     {currentMessages.map((message) => (
                       <div 
-                        key={message.id} 
-                        className="relative flex items-start space-x-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 group cursor-pointer"
+                        key={message.id}
+                        id={`message-${message.id}`}
+                        className="relative flex items-start space-x-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 group cursor-pointer transition-all duration-200"
                         onContextMenu={(e) => showMessageContextMenu(e, message)}
                         onMouseDown={(e) => handleLongPressStart(e, message)}
                         onMouseUp={handleLongPressEnd}
@@ -5833,6 +6120,210 @@ export const Chat: React.FC = () => {
                 >
                   Add {selectedMembers.length > 0 ? `${selectedMembers.length} ${selectedMembers.length === 1 ? 'person' : 'people'}` : ''}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Channel Modal */}
+      {showEditChannelModal && selectedChannel && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-900">Edit Channel</h2>
+                <button
+                  onClick={() => setShowEditChannelModal(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Channel Name */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Channel Name
+                </label>
+                <div className="relative">
+                  <Hash className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={editChannelName}
+                    onChange={(e) => setEditChannelName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="channel-name"
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Use lowercase letters, numbers, and dashes
+                </p>
+              </div>
+
+              {/* Channel Description */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Description (Optional)
+                </label>
+                <textarea
+                  value={editChannelDescription}
+                  onChange={(e) => setEditChannelDescription(e.target.value)}
+                  rows={3}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  placeholder="What's this channel about?"
+                />
+              </div>
+
+              {/* Channel Type */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Channel Type
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="channelType"
+                      value="text"
+                      checked={editChannelType === 'text'}
+                      onChange={(e) => setEditChannelType(e.target.value as 'text' | 'voice')}
+                      className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                    />
+                    <span className="ml-3 text-sm text-gray-700">Text Channel</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="channelType"
+                      value="voice"
+                      checked={editChannelType === 'voice'}
+                      onChange={(e) => setEditChannelType(e.target.value as 'text' | 'voice')}
+                      className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                    />
+                    <span className="ml-3 text-sm text-gray-700">Voice Channel</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-200">
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowEditChannelModal(false)}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpdateChannel}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Search Modal */}
+      {showSearchModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-900">Search Messages</h2>
+                <button
+                  onClick={() => {
+                    setShowSearchModal(false);
+                    setSearchQuery('');
+                    setSearchResults([]);
+                  }}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              {/* Search Input */}
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    handleSearchMessages(e.target.value);
+                  }}
+                  placeholder="Search messages..."
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  autoFocus
+                />
+              </div>
+
+              {/* Search Results */}
+              <div className="flex-1 overflow-y-auto max-h-96">
+                {searchQuery.trim() === '' ? (
+                  <div className="text-center py-8">
+                    <Search className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500">Type to search messages</p>
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="text-center py-8">
+                    <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <Search className="w-6 h-6 text-gray-400" />
+                    </div>
+                    <p className="text-gray-500">No messages found</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {searchResults.map((message) => (
+                      <div
+                        key={message.id}
+                        onClick={() => jumpToMessage(message)}
+                        className="p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-start space-x-3">
+                          <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                            {message.sender_name.charAt(0)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-sm font-semibold text-gray-900">{message.sender_name}</span>
+                                <span className="text-xs text-gray-500">
+                                  in {message.messageType === 'channel' ? `#${message.channelName}` : message.conversationName}
+                                </span>
+                              </div>
+                              <span className="text-xs text-gray-500">{formatTime(new Date(message.created_at))}</span>
+                            </div>
+                            <div 
+                              className="text-sm text-gray-800"
+                              dangerouslySetInnerHTML={{ __html: message.highlightedContent }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-200">
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>
+                  {searchResults.length > 0 
+                    ? `Found ${searchResults.length} message${searchResults.length === 1 ? '' : 's'}`
+                    : 'Search in current conversation'
+                  }
+                </span>
+                <span>Press Esc to close</span>
               </div>
             </div>
           </div>

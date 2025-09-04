@@ -112,8 +112,8 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
               <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
                 <MessageCircle className="w-6 h-6 text-gray-400" />
               </div>
-              <p className="text-gray-500 text-sm">No conversations found</p>
-              <p className="text-gray-400 text-xs mt-1">Start a conversation or create a group</p>
+              <p className="text-gray-500 text-base">No conversations found</p>
+              <p className="text-gray-400 text-sm mt-1">Start a conversation or create a group</p>
             </div>
           </div>
         ) : (
@@ -154,7 +154,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                 {/* Conversation Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="font-medium text-gray-900 truncate">{conversation.name}</h3>
+                    <h3 className="font-semibold text-base text-gray-900 truncate">{conversation.name}</h3>
                     {conversation.last_message_time && (
                       <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
                         {formatTime(conversation.last_message_time)}
@@ -162,7 +162,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     )}
                   </div>
                   <div className="flex items-center justify-between">
-                    <p className="text-sm text-gray-600 truncate">
+                    <p className="text-base text-gray-600 truncate">
                       {conversation.last_message || 
                        (conversation.type === 'group' ? 
                          `${conversation.member_count || 0} members` : 
