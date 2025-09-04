@@ -163,6 +163,10 @@ export const Chat: React.FC = () => {
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const presenceChannelRef = useRef<any>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
+  const channelPostContentRef = useRef<HTMLTextAreaElement>(null);
+  const dmInputRef = useRef<HTMLTextAreaElement>(null);
+  const postContentRef = useRef<HTMLTextAreaElement>(null);
   
   // Sent Messages state
   const [sentSearchQuery, setSentSearchQuery] = useState('');
@@ -226,6 +230,9 @@ export const Chat: React.FC = () => {
   // Emoji picker state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [emojiPickerPosition, setEmojiPickerPosition] = useState({ top: 0, left: 0 });
+  const [showMentionDropdown, setShowMentionDropdown] = useState(false);
+  const [mentionDropdownPosition, setMentionDropdownPosition] = useState({ top: 0, left: 0 });
+  const [mentionSearch, setMentionSearch] = useState('');
   
   // Scroll state
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -1907,15 +1914,8 @@ export const Chat: React.FC = () => {
       if (!storageStatus.success) {
         console.error('❌ Storage setup failed:', storageStatus.message);
         
-        // Don't show alert here - let sendFilesMessage handle it
-        // Just use fallback silently
-        console.warn('🔄 Using blob URL fallback for all files');
-        const fallbackUrls: string[] = [];
-        for (const file of selectedFiles) {
-          const blobUrl = URL.createObjectURL(file);
-          fallbackUrls.push(blobUrl);
-        }
-        return fallbackUrls;
+        // Show error to user instead of using blob URLs
+        throw new Error(`Storage not configured: ${storageStatus.message}\n\nPlease configure Supabase Storage to share files with other users. Files uploaded as blob URLs will only be visible to you.`);
       }
       
       console.log('✅ Storage setup verified');
@@ -1979,14 +1979,8 @@ export const Chat: React.FC = () => {
     } catch (error) {
       console.error('❌ Critical file upload error:', error);
       
-      // Fallback to blob URLs if Supabase storage completely fails
-      console.warn('🔄 Using blob URL fallback for all files');
-      const fallbackUrls: string[] = [];
-      for (const file of selectedFiles) {
-        const blobUrl = URL.createObjectURL(file);
-        fallbackUrls.push(blobUrl);
-      }
-      return fallbackUrls;
+      // Re-throw the error instead of using blob URLs
+      throw error;
     }
   };
 
@@ -2003,6 +1997,300 @@ export const Chat: React.FC = () => {
   const onEmojiSelect = (emoji: string) => {
     setMessageInput(prev => prev + emoji);
     setShowEmojiPicker(false);
+  };
+
+  const handleMentionClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMentionDropdownPosition({
+      top: rect.top - 250, // Position above the button
+      left: rect.left
+    });
+    setShowMentionDropdown(!showMentionDropdown);
+    setMentionSearch('');
+  };
+
+  const handleMentionSelect = (member: TeamMember) => {
+    const mentionText = `@${member.full_name || member.email} `;
+    setMessageInput(prev => prev + mentionText);
+    setShowMentionDropdown(false);
+    setMentionSearch('');
+    // Focus back on input
+    if (messageInputRef.current) {
+      messageInputRef.current.focus();
+    }
+  };
+
+  // Text formatting functions
+  const formatText = (
+    startTag: string, 
+    endTag: string, 
+    inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement>,
+    currentValue: string,
+    setValue: (value: string) => void
+  ) => {
+    if (!inputRef.current) return;
+
+    const element = inputRef.current;
+    const start = element.selectionStart || 0;
+    const end = element.selectionEnd || 0;
+    const selectedText = currentValue.substring(start, end);
+    
+    let newText: string;
+    if (selectedText) {
+      // Wrap selected text
+      newText = currentValue.substring(0, start) + startTag + selectedText + endTag + currentValue.substring(end);
+      setValue(newText);
+      // Set cursor after the formatted text
+      setTimeout(() => {
+        element.focus();
+        element.setSelectionRange(start + startTag.length, end + startTag.length);
+      }, 0);
+    } else {
+      // Insert tags at cursor position
+      newText = currentValue.substring(0, start) + startTag + endTag + currentValue.substring(start);
+      setValue(newText);
+      // Set cursor between tags
+      setTimeout(() => {
+        element.focus();
+        element.setSelectionRange(start + startTag.length, start + startTag.length);
+      }, 0);
+    }
+  };
+
+  const handleBold = (inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, currentValue: string, setValue: (value: string) => void) => {
+    formatText('**', '**', inputRef, currentValue, setValue);
+  };
+
+  const handleItalic = (inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, currentValue: string, setValue: (value: string) => void) => {
+    formatText('*', '*', inputRef, currentValue, setValue);
+  };
+
+  const handleLink = (inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, currentValue: string, setValue: (value: string) => void) => {
+    if (!inputRef.current) return;
+
+    const element = inputRef.current;
+    const start = element.selectionStart || 0;
+    const end = element.selectionEnd || 0;
+    const selectedText = currentValue.substring(start, end);
+    
+    let newText: string;
+    if (selectedText) {
+      newText = currentValue.substring(0, start) + `[${selectedText}](url)` + currentValue.substring(end);
+      setValue(newText);
+      setTimeout(() => {
+        element.focus();
+        const urlStart = start + selectedText.length + 3; // after ']('
+        element.setSelectionRange(urlStart, urlStart + 3); // select 'url'
+      }, 0);
+    } else {
+      newText = currentValue.substring(0, start) + '[text](url)' + currentValue.substring(start);
+      setValue(newText);
+      setTimeout(() => {
+        element.focus();
+        element.setSelectionRange(start + 1, start + 5); // select 'text'
+      }, 0);
+    }
+  };
+
+  const handleSteps = (inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, currentValue: string, setValue: (value: string) => void) => {
+    if (!inputRef.current) return;
+
+    const element = inputRef.current;
+    const start = element.selectionStart || 0;
+    const end = element.selectionEnd || 0;
+    const selectedText = currentValue.substring(start, end);
+    
+    let newText: string;
+    if (selectedText) {
+      // Convert selected text to numbered steps
+      const lines = selectedText.split('\n').filter(line => line.trim());
+      const steps = lines.map((line, index) => `${index + 1}. ${line.trim()}`).join('\n');
+      newText = currentValue.substring(0, start) + steps + currentValue.substring(end);
+    } else {
+      // Insert template steps
+      const steps = '1. Step one\n2. Step two\n3. Step three';
+      newText = currentValue.substring(0, start) + steps + currentValue.substring(start);
+    }
+    setValue(newText);
+    setTimeout(() => element.focus(), 0);
+  };
+
+  const handleCode = (inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, currentValue: string, setValue: (value: string) => void) => {
+    if (!inputRef.current) return;
+
+    const element = inputRef.current;
+    const start = element.selectionStart || 0;
+    const end = element.selectionEnd || 0;
+    const selectedText = currentValue.substring(start, end);
+    
+    let newText: string;
+    if (selectedText && selectedText.includes('\n')) {
+      // Multi-line code block
+      newText = currentValue.substring(0, start) + '```\n' + selectedText + '\n```' + currentValue.substring(end);
+    } else if (selectedText) {
+      // Inline code
+      newText = currentValue.substring(0, start) + '`' + selectedText + '`' + currentValue.substring(end);
+    } else {
+      // Insert inline code template
+      newText = currentValue.substring(0, start) + '`code`' + currentValue.substring(start);
+      setValue(newText);
+      setTimeout(() => {
+        element.focus();
+        element.setSelectionRange(start + 1, start + 5); // select 'code'
+      }, 0);
+      return;
+    }
+    setValue(newText);
+    setTimeout(() => element.focus(), 0);
+  };
+
+  // Function to render markdown-style formatting
+  const renderFormattedText = (text: string) => {
+    if (!text) return null;
+    
+    // Split text into parts and process each
+    let parts: (string | JSX.Element)[] = [text];
+    
+    // Process code blocks first (```)
+    parts = parts.flatMap((part) => {
+      if (typeof part !== 'string') return part;
+      
+      const codeBlockParts = part.split(/```([\s\S]*?)```/);
+      return codeBlockParts.map((p, i) => {
+        if (i % 2 === 1) {
+          // Code block
+          return (
+            <pre key={`code-block-${i}`} className="bg-gray-100 rounded px-2 py-1 text-sm font-mono whitespace-pre-wrap my-2 block">
+              <code>{p.trim()}</code>
+            </pre>
+          );
+        }
+        return p;
+      });
+    });
+    
+    // Process inline code (`)
+    parts = parts.flatMap((part) => {
+      if (typeof part !== 'string') return part;
+      
+      const codeParts = part.split(/`([^`]+)`/);
+      return codeParts.map((p, i) => {
+        if (i % 2 === 1) {
+          // Inline code
+          return (
+            <code key={`inline-code-${i}`} className="bg-gray-100 rounded px-1 py-0.5 text-sm font-mono">
+              {p}
+            </code>
+          );
+        }
+        return p;
+      });
+    });
+    
+    // Process bold (**text**)
+    parts = parts.flatMap((part) => {
+      if (typeof part !== 'string') return part;
+      
+      const boldParts = part.split(/\*\*([^*]+)\*\*/);
+      return boldParts.map((p, i) => {
+        if (i % 2 === 1) {
+          // Bold text
+          return <strong key={`bold-${i}`} className="font-semibold">{p}</strong>;
+        }
+        return p;
+      });
+    });
+    
+    // Process italic (*text*)
+    parts = parts.flatMap((part) => {
+      if (typeof part !== 'string') return part;
+      
+      const italicParts = part.split(/(?<!\*)\*(?!\*)([^*]+)\*(?!\*)/);
+      return italicParts.map((p, i) => {
+        if (i % 2 === 1) {
+          // Italic text
+          return <em key={`italic-${i}`} className="italic">{p}</em>;
+        }
+        return p;
+      });
+    });
+    
+    // Process links [text](url)
+    parts = parts.flatMap((part) => {
+      if (typeof part !== 'string') return part;
+      
+      const linkParts = part.split(/\[([^\]]+)\]\(([^)]+)\)/);
+      const result: (string | JSX.Element)[] = [];
+      
+      for (let i = 0; i < linkParts.length; i += 3) {
+        if (linkParts[i]) result.push(linkParts[i]);
+        if (i + 1 < linkParts.length && i + 2 < linkParts.length) {
+          result.push(
+            <a
+              key={`link-${i}`}
+              href={linkParts[i + 2]}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              {linkParts[i + 1]}
+            </a>
+          );
+        }
+      }
+      return result;
+    });
+    
+    // Process numbered lists (lines starting with number.)
+    parts = parts.flatMap((part) => {
+      if (typeof part !== 'string') return part;
+      
+      const lines = part.split('\n');
+      const result: (string | JSX.Element)[] = [];
+      let listItems: string[] = [];
+      let inList = false;
+      
+      lines.forEach((line, lineIndex) => {
+        if (/^\d+\.\s/.test(line)) {
+          if (!inList) {
+            inList = true;
+          }
+          listItems.push(line.replace(/^\d+\.\s/, ''));
+        } else {
+          if (inList) {
+            // End of list, render it
+            result.push(
+              <ol key={`list-${lineIndex}`} className="list-decimal list-inside space-y-1 my-2">
+                {listItems.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ol>
+            );
+            listItems = [];
+            inList = false;
+          }
+          if (line) {
+            result.push(line);
+            if (lineIndex < lines.length - 1) result.push('\n');
+          }
+        }
+      });
+      
+      // Handle list at end of text
+      if (inList && listItems.length > 0) {
+        result.push(
+          <ol key="list-end" className="list-decimal list-inside space-y-1 my-2">
+            {listItems.map((item, i) => (
+              <li key={i}>{item}</li>
+            ))}
+          </ol>
+        );
+      }
+      
+      return result;
+    });
+    
+    return <>{parts}</>;
   };
 
   const onEmojiReact = async (messageId: string, emoji: string) => {
@@ -2105,11 +2393,16 @@ export const Chat: React.FC = () => {
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
   const [messageReactions, setMessageReactions] = useState<{[messageId: string]: {emoji: string; count: number; users: string[]}[]}>({});
 
-  // Close emoji picker and reaction picker when clicking outside
+  // Close emoji picker, mention dropdown and reaction picker when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (showEmojiPicker && !(event.target as Element).closest('.emoji-picker-container')) {
         setShowEmojiPicker(false);
+      }
+      if (showMentionDropdown && !(event.target as Element).closest('.mention-dropdown') && 
+          !(event.target as Element).closest('[title="Mention someone"]')) {
+        setShowMentionDropdown(false);
+        setMentionSearch('');
       }
       if (showReactionPicker && !(event.target as Element).closest('.reaction-picker') && 
           !(event.target as Element).closest('[title="Add reaction"]')) {
@@ -2119,7 +2412,7 @@ export const Chat: React.FC = () => {
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showEmojiPicker, showReactionPicker]);
+  }, [showEmojiPicker, showMentionDropdown, showReactionPicker]);
 
   // Handle scroll detection for scroll-to-bottom button
   useEffect(() => {
@@ -2556,7 +2849,16 @@ export const Chat: React.FC = () => {
       console.log('✅ All files sent successfully!');
     } catch (error) {
       console.error('❌ Error sending files:', error);
-      alert(`❌ Failed to send files: ${error.message}. Please check console for details.`);
+      
+      // Show storage setup instructions
+      const instructions = await getStorageInstructions();
+      const setupMessage = `❌ Failed to upload files: ${error.message}\n\n${instructions}`;
+      
+      if (confirm(`${setupMessage}\n\n🛠️ Would you like me to try automatic setup? (Click OK to try, Cancel to manually configure)`)) {
+        await setupStorageManually();
+      } else {
+        alert('Please configure Supabase Storage manually using the instructions above, then try uploading again.');
+      }
       
       // Keep modal open so user can try again
       // setShowFilePreview(false); // Don't close on error
@@ -2856,7 +3158,7 @@ export const Chat: React.FC = () => {
       // If not a file message, return as regular text
     }
     
-    return content;
+    return renderFormattedText(content);
   };
 
   const formatTime = (date: Date | string) => {
@@ -2949,7 +3251,7 @@ export const Chat: React.FC = () => {
                   {dbChannels.map((channel) => (
                     <button
                       key={channel.id}
-                      className={`w-full flex items-center px-2 py-1.5 text-sm rounded transition-colors ${
+                      className={`w-full flex items-center px-2 py-1.5 text-xs rounded transition-colors ${
                         selectedChannel?.id === channel.id
                           ? 'bg-blue-100 text-blue-700'
                           : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
@@ -2978,7 +3280,7 @@ export const Chat: React.FC = () => {
                   availableDirectMessages.map((dm) => (
                     <button
                       key={dm.id}
-                      className={`w-full flex items-center px-2 py-1.5 text-sm rounded transition-colors ${
+                      className={`w-full flex items-center px-2 py-1.5 text-xs rounded transition-colors ${
                         selectedDM === dm.id
                           ? 'bg-blue-100 text-blue-700'
                           : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
@@ -3164,7 +3466,9 @@ export const Chat: React.FC = () => {
                                 <span className="text-xs text-gray-500">{formatTime(new Date(message.created_at))}</span>
                                 {message.is_edited && <span className="text-xs text-gray-400">(edited)</span>}
                               </div>
-                              <div className="text-sm text-gray-800">{message.content}</div>
+                              <div className="text-sm text-gray-800">
+                                {renderFileMessage(message.content)}
+                              </div>
 
 
                             </div>
@@ -3192,6 +3496,7 @@ export const Chat: React.FC = () => {
                     <div className="bg-white border border-gray-300 rounded-lg">
                       <div className="flex items-start p-2">
                         <input
+                          ref={messageInputRef}
                           type="text"
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
@@ -3206,26 +3511,57 @@ export const Chat: React.FC = () => {
                             <Plus className="w-4 h-4" />
                           </button>
                           <div className="h-4 w-px bg-gray-300 mx-1" />
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <button 
+                            onClick={() => handleBold(messageInputRef, messageInput, setMessageInput)}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Bold"
+                          >
                             <Bold className="w-4 h-4" />
                           </button>
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <button 
+                            onClick={() => handleItalic(messageInputRef, messageInput, setMessageInput)}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Italic"
+                          >
                             <Italic className="w-4 h-4" />
                           </button>
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <button 
+                            onClick={() => handleLink(messageInputRef, messageInput, setMessageInput)}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Add link"
+                          >
                             <Link2 className="w-4 h-4" />
                           </button>
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <button 
+                            onClick={() => handleSteps(messageInputRef, messageInput, setMessageInput)}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Add numbered list"
+                          >
                             <List className="w-4 h-4" />
                           </button>
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <button 
+                            onClick={() => handleCode(messageInputRef, messageInput, setMessageInput)}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Add code"
+                          >
                             <Code className="w-4 h-4" />
                           </button>
                           <div className="h-4 w-px bg-gray-300 mx-1" />
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                          <label className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors cursor-pointer" title="Attach files">
                             <Paperclip className="w-4 h-4" />
-                          </button>
-                          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                            <input
+                              type="file"
+                              multiple
+                              onChange={handleFileSelect}
+                              className="hidden"
+                              accept="*/*"
+                            />
+                          </label>
+                          <button 
+                            onClick={handleMentionClick}
+                            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="Mention someone"
+                          >
                             <AtSign className="w-4 h-4" />
                           </button>
                           <button 
@@ -3274,6 +3610,7 @@ export const Chat: React.FC = () => {
                           />
                           <div className="px-4 pb-3">
                             <textarea
+                              ref={channelPostContentRef}
                               placeholder="What would you like to share?"
                               value={channelPostContent}
                               onChange={(e) => setChannelPostContent(e.target.value)}
@@ -3292,10 +3629,21 @@ export const Chat: React.FC = () => {
                                 Update
                                 <ChevronDown className="w-3 h-3 ml-1" />
                               </button>
-                              <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                              <label className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors cursor-pointer" title="Attach files">
                                 <Paperclip className="w-4 h-4" />
-                              </button>
-                              <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                                <input
+                                  type="file"
+                                  multiple
+                                  onChange={handleFileSelect}
+                                  className="hidden"
+                                  accept="*/*"
+                                />
+                              </label>
+                              <button 
+                                onClick={handleMentionClick}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Mention someone"
+                              >
                                 <AtSign className="w-4 h-4" />
                               </button>
                               <button 
@@ -3305,7 +3653,40 @@ export const Chat: React.FC = () => {
                               >
                                 <Smile className="w-4 h-4" />
                               </button>
-                              <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                              <div className="h-4 w-px bg-gray-300 mx-1" />
+                              <button 
+                                onClick={() => handleBold(channelPostContentRef, channelPostContent, setChannelPostContent)}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Bold"
+                              >
+                                <Bold className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleItalic(channelPostContentRef, channelPostContent, setChannelPostContent)}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Italic"
+                              >
+                                <Italic className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleLink(channelPostContentRef, channelPostContent, setChannelPostContent)}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Add link"
+                              >
+                                <Link2 className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleSteps(channelPostContentRef, channelPostContent, setChannelPostContent)}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Add numbered list"
+                              >
+                                <List className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleCode(channelPostContentRef, channelPostContent, setChannelPostContent)}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                                title="Add code"
+                              >
                                 <Code className="w-4 h-4" />
                               </button>
                               <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
@@ -3408,7 +3789,7 @@ export const Chat: React.FC = () => {
                               )}
                               
                               <div className="text-sm text-gray-800 space-y-2">
-                                <p>{post.content}</p>
+                                <div>{renderFormattedText(post.content)}</div>
                               </div>
 
                               {post.tags && post.tags.length > 0 && (
@@ -3537,7 +3918,7 @@ export const Chat: React.FC = () => {
                                                 <div className="font-semibold text-sm text-gray-900">
                                                   {comment.profiles?.full_name || comment.profiles?.email || 'Unknown'}
                                                 </div>
-                                                <p className="text-gray-800 text-sm">{comment.content}</p>
+                                                <div className="text-gray-800 text-sm">{renderFormattedText(comment.content)}</div>
                                               </div>
                                               <div className="text-xs text-gray-500 mt-1">
                                                 {formatTime(comment.created_at)}
@@ -3711,6 +4092,7 @@ export const Chat: React.FC = () => {
                 <div className="bg-white border border-gray-300 rounded-lg">
                   <div className="flex items-center p-1.5">
                     <input
+                      ref={messageInputRef}
                       type="text"
                       value={messageInput}
                       onChange={(e) => setMessageInput(e.target.value)}
@@ -3725,19 +4107,39 @@ export const Chat: React.FC = () => {
                         <Plus className="w-3 h-3" />
                       </button>
                       <div className="h-4 w-px bg-gray-300 mx-1" />
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={() => handleBold(messageInputRef, messageInput, setMessageInput)}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Bold"
+                      >
                         <Bold className="w-4 h-4" />
                       </button>
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={() => handleItalic(messageInputRef, messageInput, setMessageInput)}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Italic"
+                      >
                         <Italic className="w-4 h-4" />
                       </button>
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={() => handleLink(messageInputRef, messageInput, setMessageInput)}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Add link"
+                      >
                         <Link2 className="w-4 h-4" />
                       </button>
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={() => handleSteps(messageInputRef, messageInput, setMessageInput)}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Add numbered list"
+                      >
                         <List className="w-4 h-4" />
                       </button>
-                      <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                      <button 
+                        onClick={() => handleCode(messageInputRef, messageInput, setMessageInput)}
+                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                        title="Add code"
+                      >
                         <Code className="w-4 h-4" />
                       </button>
                       <div className="h-4 w-px bg-gray-300 mx-1" />
@@ -3944,6 +4346,7 @@ export const Chat: React.FC = () => {
                           className="w-full text-base font-medium placeholder-gray-500 border-0 focus:outline-none mb-1"
                         />
                         <textarea
+                          ref={postContentRef}
                           placeholder="Write an update..."
                           value={postContent}
                           onChange={(e) => setPostContent(e.target.value)}
@@ -3958,19 +4361,39 @@ export const Chat: React.FC = () => {
                               <Plus className="w-4 h-4" />
                             </button>
                             <div className="h-4 w-px bg-gray-300 mx-1" />
-                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                            <button 
+                              onClick={() => handleBold(postContentRef, postContent, setPostContent)}
+                              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                              title="Bold"
+                            >
                               <Bold className="w-4 h-4" />
                             </button>
-                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                            <button 
+                              onClick={() => handleItalic(postContentRef, postContent, setPostContent)}
+                              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                              title="Italic"
+                            >
                               <Italic className="w-4 h-4" />
                             </button>
-                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                            <button 
+                              onClick={() => handleLink(postContentRef, postContent, setPostContent)}
+                              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                              title="Add link"
+                            >
                               <Link2 className="w-4 h-4" />
                             </button>
-                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                            <button 
+                              onClick={() => handleSteps(postContentRef, postContent, setPostContent)}
+                              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                              title="Add numbered list"
+                            >
                               <List className="w-4 h-4" />
                             </button>
-                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                            <button 
+                              onClick={() => handleCode(postContentRef, postContent, setPostContent)}
+                              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                              title="Add code"
+                            >
                               <Code className="w-4 h-4" />
                             </button>
                             <div className="h-4 w-px bg-gray-300 mx-1" />
@@ -3979,9 +4402,16 @@ export const Chat: React.FC = () => {
                               Update
                               <ChevronDown className="w-3 h-3 ml-1" />
                             </button>
-                            <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
+                            <label className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded cursor-pointer" title="Attach files">
                               <Paperclip className="w-4 h-4" />
-                            </button>
+                              <input
+                                type="file"
+                                multiple
+                                onChange={handleFileSelect}
+                                className="hidden"
+                                accept="*/*"
+                              />
+                            </label>
                             <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded">
                               <Smile className="w-4 h-4" />
                             </button>
@@ -4084,7 +4514,7 @@ export const Chat: React.FC = () => {
                               )}
                               
                               <div className="text-sm text-gray-800 space-y-2">
-                                <p>{post.content}</p>
+                                <div>{renderFormattedText(post.content)}</div>
                               </div>
 
                               {post.tags && post.tags.length > 0 && (
@@ -4213,7 +4643,7 @@ export const Chat: React.FC = () => {
                                                 <div className="font-semibold text-sm text-gray-900">
                                                   {comment.profiles?.full_name || comment.profiles?.email || 'Unknown'}
                                                 </div>
-                                                <p className="text-gray-800 text-sm">{comment.content}</p>
+                                                <div className="text-gray-800 text-sm">{renderFormattedText(comment.content)}</div>
                                               </div>
                                               <div className="text-xs text-gray-500 mt-1">
                                                 {formatTime(comment.created_at)}
@@ -4289,6 +4719,7 @@ export const Chat: React.FC = () => {
                           className="w-full text-lg font-medium placeholder-gray-500 border-0 focus:outline-none bg-transparent"
                         />
                         <textarea
+                          ref={postContentRef}
                           placeholder="Write an update..."
                           value={postContent}
                           onChange={(e) => setPostContent(e.target.value)}
@@ -4306,25 +4737,52 @@ export const Chat: React.FC = () => {
                             <Plus className="w-4 h-4" />
                           </button>
                           <div className="h-4 w-px bg-gray-300 mx-1" />
-                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                          <button 
+                            onClick={() => handleBold(postContentRef, postContent, setPostContent)}
+                            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                            title="Bold"
+                          >
                             <Bold className="w-4 h-4" />
                           </button>
-                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                          <button 
+                            onClick={() => handleItalic(postContentRef, postContent, setPostContent)}
+                            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                            title="Italic"
+                          >
                             <Italic className="w-4 h-4" />
                           </button>
-                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                          <button 
+                            onClick={() => handleLink(postContentRef, postContent, setPostContent)}
+                            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                            title="Add link"
+                          >
                             <Link2 className="w-4 h-4" />
                           </button>
-                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                          <button 
+                            onClick={() => handleSteps(postContentRef, postContent, setPostContent)}
+                            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                            title="Add numbered list"
+                          >
                             <List className="w-4 h-4" />
                           </button>
-                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                          <button 
+                            onClick={() => handleCode(postContentRef, postContent, setPostContent)}
+                            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                            title="Add code"
+                          >
                             <Code className="w-4 h-4" />
                           </button>
                           <div className="h-4 w-px bg-gray-300 mx-1" />
-                          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
+                          <label className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded cursor-pointer" title="Attach files">
                             <Paperclip className="w-4 h-4" />
-                          </button>
+                            <input
+                              type="file"
+                              multiple
+                              onChange={handleFileSelect}
+                              className="hidden"
+                              accept="*/*"
+                            />
+                          </label>
                           <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded">
                             <AtSign className="w-4 h-4" />
                           </button>
@@ -5093,7 +5551,7 @@ export const Chat: React.FC = () => {
                               </span>
                             </div>
                             <div className="flex items-start justify-between group">
-                              <p className="text-sm text-gray-900 flex-1 pr-4 line-clamp-2">{message.content}</p>
+                              <div className="text-sm text-gray-900 flex-1 pr-4 line-clamp-2">{renderFormattedText(message.content)}</div>
                               <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   className="p-1 text-gray-400 hover:text-gray-600 rounded"
@@ -5704,6 +6162,69 @@ export const Chat: React.FC = () => {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mention Dropdown */}
+      {showMentionDropdown && (
+        <div 
+          className="mention-dropdown fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg"
+          style={{ 
+            top: mentionDropdownPosition.top, 
+            left: mentionDropdownPosition.left,
+            width: '260px',
+            maxHeight: '300px'
+          }}
+        >
+          <div className="p-2 border-b border-gray-200">
+            <input
+              type="text"
+              placeholder="Search team members..."
+              value={mentionSearch}
+              onChange={(e) => setMentionSearch(e.target.value)}
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              autoFocus
+            />
+          </div>
+          <div className="overflow-y-auto max-h-60">
+            {teamMembers
+              .filter(member => 
+                mentionSearch === '' || 
+                member.full_name?.toLowerCase().includes(mentionSearch.toLowerCase()) ||
+                member.email?.toLowerCase().includes(mentionSearch.toLowerCase())
+              )
+              .map((member) => (
+                <button
+                  key={member.id}
+                  onClick={() => handleMentionSelect(member)}
+                  className="w-full flex items-center space-x-3 px-3 py-2 hover:bg-gray-50 transition-colors text-left"
+                >
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                    {(member.full_name || member.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">
+                      {member.full_name || 'Anonymous'}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {member.email}
+                    </div>
+                  </div>
+                  {onlineUsers.has(member.id) && (
+                    <div className="w-2 h-2 bg-green-500 rounded-full" title="Online" />
+                  )}
+                </button>
+              ))}
+            {teamMembers.filter(member => 
+              mentionSearch === '' || 
+              member.full_name?.toLowerCase().includes(mentionSearch.toLowerCase()) ||
+              member.email?.toLowerCase().includes(mentionSearch.toLowerCase())
+            ).length === 0 && (
+              <div className="p-4 text-center text-sm text-gray-500">
+                No members found
+              </div>
+            )}
           </div>
         </div>
       )}
