@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Calendar, Edit3 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { Task, SubTask, TaskPriority } from '../types/tasks';
 import { useSupabase } from '../hooks/useSupabase';
-import { DeleteConfirmationModal } from './DeleteConfirmationModal';
 
 interface TaskItemProps {
   task: Task;
@@ -67,30 +66,6 @@ export const TaskItem: React.FC<TaskItemProps> = React.memo(({ task, onUpdate, o
     }
   };
 
-  const handleEndDateChange = async (date: string) => {
-    if (loading) return;
-    
-    try {
-      setLoading(true);
-      const { error } = await supabase
-        .from('tasks')
-        .update({ 
-          end_date: date,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', task.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      onUpdate();
-    } catch (error) {
-      console.error('Error updating end date:', error);
-      onUpdate();
-    } finally {
-      setLoading(false);
-    }
-  };
 
 
 
@@ -155,7 +130,7 @@ export const TaskItem: React.FC<TaskItemProps> = React.memo(({ task, onUpdate, o
 
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200 overflow-hidden">
+    <div className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 overflow-hidden">
       {/* Task Header */}
       <div className="p-4">
         <div className="flex items-start justify-between gap-3">
@@ -224,23 +199,6 @@ export const TaskItem: React.FC<TaskItemProps> = React.memo(({ task, onUpdate, o
                   }`}
                 />
                 <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              </div>
-
-              {/* End Date */}
-              <div className="relative">
-                <input
-                  type="date"
-                  value={task.end_date || ''}
-                  onChange={(e) => handleEndDateChange(e.target.value)}
-                  disabled={loading || task.status === 'completed'}
-                  placeholder="End Date"
-                  className={`w-full pl-8 pr-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1 transition-colors ${
-                    task.status === 'completed' 
-                      ? 'bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed'
-                      : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
-                  }`}
-                />
-                <Edit3 className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               </div>
             </div>
           </div>
